@@ -1,0 +1,9 @@
+node_modules/
+dist/
+config/settings.env
+*.log
+.DS_Store
+uploads/
+python_server/__pycache__/
+.venv/
+python_server/config/__pycache__/
