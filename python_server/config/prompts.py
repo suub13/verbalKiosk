@@ -91,7 +91,7 @@ Response validation rules (CRITICAL):
 
 GREETING_KO = """
 첫 인사 (반드시 아래 내용을 자연스럽게 음성으로 전달하세요):
-"안녕하세요, 우리은행 발급/출력 도우미입니다. 이 키오스크에서는 주민등록등본, 건강보험 자격득실 확인서, 납세증명서, 이렇게 세 가지 서류를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?" """
+"안녕하세요, 주민등록등본, 건강보험 자격득실 확인서, 납세증명서 중 어떤 서류를 발급받으시겠어요?" """
 
 GREETING_EN = """
 First greeting (you MUST speak this naturally):

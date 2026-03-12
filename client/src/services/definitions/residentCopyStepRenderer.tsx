@@ -253,7 +253,26 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
     if (json.success) {
       setApplyPhase('done');
       const { pipelineBridge } = await import('@/services/pipelineBridge');
-      pipelineBridge.sendOptionsConfirmed?.(JSON.stringify({ doc_issued: true, result: json.data }));
+      // 출력단계 부환시 
+      // pipelineBridge.sendOptionsConfirmed?.(JSON.stringify({ doc_issued: true, result: json.data }));  
+
+      // 2) 완료 화면을 1.5초 보여준 후 navigate
+      setTimeout(() => {
+        const previewUrl = 'https://stg.pinokr.com:48450/kiosk/services/print/preview';
+        if (window.parent !== window) {
+          // iframe 안 → 부모에게 navigate 요청
+          window.parent.postMessage({ action: 'navigate', url: previewUrl }, '*');
+        } else {
+          // 직접 접근 → 현재 탭 이동
+          window.location.href = previewUrl;
+        }
+      }, 1500);
+      // ── 기존 출력 프로세스 로직 (비활성화) ──────────────────────────
+      // window.open(previewUrl, '_blank');
+      // window.parent.postMessage({ action: 'close' }, '*');
+      // window.close();
+      // ─────────────────────────────────────────────────────────────────
+
       return true;
     }
     // 사용자가 아직 Naver 앱에서 승인 안 한 상태 → 재시도
@@ -311,13 +330,13 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
     }
   };
 
-  // ── 완료 화면
+  // ── 완료 화면 (App.tsx가 store.previewUrl을 감지해 전체화면 iframe으로 전환)
   if (applyPhase === 'done') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 24px' }}>
         <div style={{ fontSize: 72, marginBottom: 20 }}>✅</div>
         <h2 style={{ fontSize: 26, fontWeight: 700, color: '#1e293b', marginBottom: 8 }}>전자서명 완료</h2>
-        <p style={{ fontSize: 18, color: '#64748b' }}>전자증명서 발급이 완료되었습니다. 출력 단계로 이동합니다.</p>
+        <p style={{ fontSize: 18, color: '#64748b' }}>전자증명서 발급이 완료되었습니다. 미리보기로 이동합니다...</p>
       </div>
     );
   }
