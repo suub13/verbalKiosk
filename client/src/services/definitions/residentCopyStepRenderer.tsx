@@ -242,29 +242,43 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
     return result;
   };
 
-  // ── handleDocApply: signToken을 직접 받아 처리 (버튼 없이 자동 실행)
-  const handleDocApply = async (signToken: string) => {
-    if (!data.pinoAccessToken || !data.pinoGovDocId || !signToken) {
-      setErrorMsg('서명 토큰이 없습니다.'); return;
-    }
-    try {
-      const res = await fetch('/api/pino/apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'accessToken': data.pinoAccessToken as string },
-        body: JSON.stringify({ govDocId: data.pinoGovDocId, signToken }),
-      });
-      const json = await res.json();
-      if (!json.success) throw new Error(json.error ?? '전자증명서 발급 실패');
+  // ── tryDocApply: 단일 시도 → true(성공) / false(재시도 가능) / throw(치명적 오류)
+  const tryDocApply = async (signToken: string): Promise<boolean> => {
+    const res = await fetch('/api/pino/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'accessToken': data.pinoAccessToken as string },
+      body: JSON.stringify({ govDocId: data.pinoGovDocId, signToken }),
+    });
+    const json = await res.json();
+    if (json.success) {
       setApplyPhase('done');
-      // 서명 완료 신호 전송 → AI가 issue_document 호출하도록
       const { pipelineBridge } = await import('@/services/pipelineBridge');
       pipelineBridge.sendOptionsConfirmed?.(JSON.stringify({ doc_issued: true, result: json.data }));
-    } catch (e: unknown) {
-      setErrorMsg(e instanceof Error ? e.message : '발급 중 오류가 발생했습니다.');
+      return true;
     }
+    // 사용자가 아직 Naver 앱에서 승인 안 한 상태 → 재시도
+    return false;
   };
 
-  // ── handleApplySign: providerId 직접 받아 signToken 획득 후 handleDocApply 자동 호출
+  // ── pollDocApply: 사용자가 Naver 앱 승인할 때까지 polling (3초 간격, 최대 90초)
+  const pollDocApply = async (signToken: string) => {
+    const INTERVAL_MS = 3000;
+    const MAX_ATTEMPTS = 70; // 210초 (3분 30초)
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      await new Promise(r => setTimeout(r, INTERVAL_MS));
+      try {
+        const done = await tryDocApply(signToken);
+        if (done) return; // 성공
+      } catch (e: unknown) {
+        // 네트워크 오류 등 일시적 실패 → 계속 재시도
+      }
+    }
+    // 타임아웃
+    setErrorMsg('인증 시간이 초과되었습니다. 처음부터 다시 시도해 주세요.');
+    setApplyPhase('select');
+  };
+
+  // ── handleApplySign: Naver 버튼 클릭 → sign API → waiting 화면 → polling 시작
   const handleApplySign = async (providerId: string) => {
     if (!data.pinoAccessToken || !data.pinoGovDocId) {
       setErrorMsg('인증 정보가 없습니다. 본인인증을 다시 해주세요.'); return;
@@ -287,8 +301,8 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
       const signToken = json.data.signToken;
       patchServiceData({ pinoSignToken: signToken });
       setApplyPhase('waiting');
-      // signToken 바로 넘겨서 자동 실행
-      await handleDocApply(signToken);
+      // Naver 앱 승인 대기 후 polling으로 발급 (isLoading은 finally에서 해제)
+      await pollDocApply(signToken);
     } catch (e: unknown) {
       setErrorMsg(e instanceof Error ? e.message : '오류가 발생했습니다.');
       setApplyPhase('select');
@@ -319,16 +333,14 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
           {provider.waitingText}
         </p>
         <div style={{ padding: '16px 32px', borderRadius: 12, background: provider.bgColor, border: `1px solid ${provider.borderColor}`, color: provider.activeColor, fontSize: 15, fontWeight: 600 }}>
-          {isLoading ? '처리 중...' : '인증 완료 후 자동으로 진행됩니다'}
+          인증 완료 후 자동으로 진행됩니다
         </div>
-        {isLoading && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#64748b', fontSize: 16 }}>
-            <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ animation: 'spin 1s linear infinite' }}>
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-            </svg>
-            발급 처리 중...
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#64748b', fontSize: 16 }}>
+          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }}>
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+          </svg>
+          Naver 앱 승인 대기 중...
+        </div>
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
         {errorMsg && (
           <div style={{
