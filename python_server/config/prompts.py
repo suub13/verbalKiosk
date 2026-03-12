@@ -6,12 +6,14 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 STT_STEP_PROMPTS: dict[str, str] = {
-    "default": "우리은행 키오스크 문서 발급/출력 서비스입니다. 주민등록등본, 건강보험 자격득실 확인서, 납세증명서를 발급할 수 있습니다.",
-    "address_sido": "사용자가 주민등록 주소의 시/도를 말합니다. 서울, 서울시, 서울특별시, 부산, 부산시, 부산광역시, 대구, 대구시, 대구광역시, 인천, 인천시, 인천광역시, 광주, 광주시, 광주광역시, 대전, 대전시, 대전광역시, 울산, 울산시, 울산광역시, 세종, 세종시, 세종특별자치시, 경기, 경기도, 강원, 강원도, 강원특별자치도, 충북, 충청북도, 충남, 충청남도, 전북, 전라북도, 전북특별자치도, 전남, 전라남도, 경북, 경상북도, 경남, 경상남도, 제주, 제주도, 제주특별자치도.",
-    "type": "주민등록등본 발급 형태를 선택합니다. 기본발급, 선택발급, 기본으로 할게요, 선택해서 할게요, 직접 선택, 골라서 발급.",
-    "consent": "개인정보 수집 이용 동의 여부를 답합니다. 동의합니다, 네 동의합니다, 동의하지 않습니다, 아니요.",
-    "phone": "휴대전화번호를 말씀해 주세요. 공일공, 010, 일이삼사, 영, 하나, 둘, 셋, 넷, 다섯, 여섯, 일곱, 여덟, 아홉.",
-    "form_fill": "양식 항목을 입력합니다. 이름, 주소, 주민등록번호, 사용 목적, 발급 부수.",
+    # ⚠️ prompt는 맥락 설명만 — 구체적 단어 목록은 hallucination 씨앗이 되므로 제거
+    "default": "우리은행 키오스크 서비스입니다.",
+    "address_sido": "주민등록 주소의 시도를 말하는 중입니다.",
+    "address_sigungu": "주민등록 주소의 시군구를 말하는 중입니다.",
+    "type": "발급 형태를 선택하는 중입니다.",
+    "consent": "개인정보 동의 여부를 답하는 중입니다.",
+    "phone": "휴대전화번호를 말하는 중입니다.",
+    "form_fill": "양식 항목을 입력하는 중입니다.",
 }
 
 BASE_PROMPT_KO = """당신은 우리은행의 친절한 AI 키오스크 도우미입니다. 고객이 각종 증명서와 서류를 음성으로 편리하게 발급받을 수 있도록 돕는 것이 당신의 임무입니다.
@@ -89,19 +91,68 @@ Response validation rules (CRITICAL):
 
 GREETING_KO = """
 첫 인사 (반드시 아래 내용을 자연스럽게 음성으로 전달하세요):
-"안녕하세요, 우리은행 발급/출력 도우미입니다. 먼저 사용 방법을 간단히 안내드리겠습니다. 제가 안내를 마치고 삐 소리가 나면, 그때 원하시는 내용을 말씀해 주세요. 이 키오스크에서는 주민등록등본, 건강보험 자격득실 확인서, 납세증명서, 이렇게 세 가지 서류를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?" """
+"안녕하세요, 우리은행 발급/출력 도우미입니다. 이 키오스크에서는 주민등록등본, 건강보험 자격득실 확인서, 납세증명서, 이렇게 세 가지 서류를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?" """
 
 GREETING_EN = """
 First greeting (you MUST speak this naturally):
 "Hello, I'm the Woori Bank Document Issuance assistant. At this kiosk, you can issue three types of documents: Resident Registration Certificate, Health Insurance Qualification Certificate, and Tax Payment Certificate. Which document would you like to issue?" """
 
 
+# ── 동적 서류 목록 기반 GREETING 빌더 ─────────────────────────────────────────
+
+# 캐시: Pino API에서 받아온 사용 가능 서류 목록
+_available_docs: list[dict] = []   # [{"govDocId": "1", "govDocNm": "주민등록 등본"}, ...]
+
+
+def set_available_docs(docs: list[dict]) -> None:
+    """세션 시작 시 Pino API 응답으로 available docs 를 설정합니다."""
+    global _available_docs
+    _available_docs = [d for d in docs if d.get("useAt", "N") == "Y"]
+
+
+def get_available_docs() -> list[dict]:
+    """현재 캐시된 사용 가능 서류 목록을 반환합니다."""
+    return _available_docs
+
+
+def build_greeting_ko() -> str:
+    """사용 가능 서류 목록을 반영한 한국어 인사말을 반환합니다."""
+    if _available_docs:
+        doc_names = [d.get("govDocNm", "") for d in _available_docs if d.get("govDocNm")]
+        count = len(doc_names)
+        if count == 1:
+            doc_list_str = doc_names[0]
+            count_str = "한 가지 서류를"
+        else:
+            doc_list_str = ", ".join(doc_names[:-1]) + f", {doc_names[-1]}"
+            count_str = f"이렇게 {count}가지 서류를"
+        greeting_text = (
+            f"안녕하세요, 우리은행 발급/출력 도우미입니다. "
+            f"이 키오스크에서는 {doc_list_str}, {count_str} 발급받으실 수 있습니다. "
+            f"어떤 서류를 발급받으시겠어요?"
+        )
+    else:
+        # fallback — Pino API 미연결 시 기존 문구 사용
+        greeting_text = (
+            "안녕하세요, 우리은행 발급/출력 도우미입니다. "
+            "이 키오스크에서는 주민등록등본, 건강보험 자격득실 확인서, 납세증명서, "
+            "이렇게 세 가지 서류를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?"
+        )
+    return f'\n첫 인사 (반드시 아래 내용을 자연스럽게 음성으로 전달하세요):\n"{greeting_text}" '
+
+
+def build_greeting_en() -> str:
+    """사용 가능 서류 목록을 반영한 영어 인사말을 반환합니다."""
+    # govDocNm 은 한국어 고정이므로 영어는 fallback 유지
+    return GREETING_EN
+
+
 def build_system_prompt(language: str = "ko") -> str:
     # Import here to avoid circular imports
     from services.definitions.registry import get_all_server_service_definitions
-    
+
     base = BASE_PROMPT_KO if language == "ko" else BASE_PROMPT_EN
-    greeting = GREETING_KO if language == "ko" else GREETING_EN
+    greeting = build_greeting_ko() if language == "ko" else build_greeting_en()
 
     service_sections = [
         defn.system_prompt_section.get(language, "")
@@ -127,6 +178,14 @@ def _build_prompts() -> dict[str, str]:
 SYSTEM_PROMPTS: dict[str, str] = {}
 
 def get_system_prompt(language: str) -> str:
+    """
+    시스템 프롬프트를 반환합니다.
+    available_docs 가 설정된 이후에는 매번 새로 빌드해 동적 인사말을 반영합니다.
+    """
+    if _available_docs:
+        # 서류 목록이 있으면 항상 최신 greeting 으로 재빌드
+        return build_system_prompt(language)
+
     global SYSTEM_PROMPTS
     if not SYSTEM_PROMPTS:
         SYSTEM_PROMPTS = _build_prompts()

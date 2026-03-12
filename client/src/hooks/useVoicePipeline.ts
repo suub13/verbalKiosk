@@ -3,7 +3,7 @@
  * Coordinates between Realtime API (Service 1) and Cascaded (Service 2).
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useStore } from '@/store';
 import { useAudioEngine } from './useAudioEngine';
 import { useRealtimeAPI } from './useRealtimeAPI';
@@ -100,6 +100,7 @@ export function useVoicePipeline() {
     }
   }, [cancelResponse, stopStreaming, stopCapture, stopPlayback, disconnect, clearSession, transition]);
 
+
   /** Toggle microphone mute */
   const toggleMute = useCallback(() => {
     const isMuted = useStore.getState().isMuted;
@@ -131,6 +132,38 @@ export function useVoicePipeline() {
     return () => clearTimeout(timer);
   }, [workflowCurrentStep, voiceState, endSession]);
 
+  /**
+   * 본인인증 단계(verify) 진입 시 마이크 자동 OFF.
+   * identity_verified 신호 후 다른 단계로 넘어가면 자동 ON.
+   * 도움 버튼으로 isMuted가 외부에서 바뀌면 startCapture/stopCapture 반영.
+   */
+  const isMuted = useStore(s => s.isMuted);
+  const micMutedForVerifyRef = useRef(false);
+
+  // verify 단계 진입/이탈 시 마이크 제어
+  useEffect(() => {
+    const isVerify = workflowCurrentStep === 'verify';
+    if (isVerify && !micMutedForVerifyRef.current) {
+      micMutedForVerifyRef.current = true;
+      stopCapture();
+      useStore.getState().setMuted(true);
+    } else if (!isVerify && micMutedForVerifyRef.current) {
+      micMutedForVerifyRef.current = false;
+      useStore.getState().setMuted(false);
+      startCapture();
+    }
+  }, [workflowCurrentStep, stopCapture, startCapture]);
+
+  // 도움 버튼 등 외부에서 isMuted 변경 시 캡처 제어
+  useEffect(() => {
+    if (!micMutedForVerifyRef.current) return; // verify 단계에서만 적용
+    if (isMuted) {
+      stopCapture();
+    } else {
+      startCapture();
+    }
+  }, [isMuted, stopCapture, startCapture]);
+
 
 
   return {
@@ -142,4 +175,3 @@ export function useVoicePipeline() {
     toggleMute,
   };
 }
-

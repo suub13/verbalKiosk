@@ -125,11 +125,20 @@ CIVIL_SERVICE_TOOLS = [
     {
         "type": "function",
         "name": "set_issuance_type",
-        "description": "주민등록등본 발급형태를 설정합니다.",
+        "description": (
+            "주민등록등본 발급형태를 설정합니다. "
+            "사용자가 '기본발급', '기본으로', '전체 다' 등으로 말하면 type='basic'을 사용하세요. "
+            "사용자가 '선택발급', '선택해서', '골라서', '직접 선택' 등으로 말하면 반드시 type='custom'을 사용하세요. "
+            "'선택발급'을 'basic'으로 잘못 설정하면 안 됩니다."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
-                "type": {"type": "string", "enum": ["basic", "custom"]},
+                "type": {
+                    "type": "string",
+                    "enum": ["basic", "custom"],
+                    "description": "기본발급=basic, 선택발급=custom. 선택발급이라고 하면 반드시 custom.",
+                },
             },
             "required": ["type"],
         },
@@ -195,6 +204,90 @@ CIVIL_SERVICE_TOOLS = [
                 "reason": {"type": "string"},
             },
             "required": ["reason"],
+        },
+    },
+    # ── Pino API: 본인인증 flow ─────────────────────────────────────────────
+    {
+        "type": "function",
+        "name": "pino_request_sms",
+        "description": (
+            "본인인증 SMS를 발송합니다. "
+            "사용자에게 이름, 생년월일(YYYYMMDD), 주민번호 뒷자리 첫 번째 숫자, "
+            "이동통신사(SKT/KT/LGU), 휴대폰 번호를 수집한 뒤 호출하세요."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "providerId": {
+                    "type": "string",
+                    "description": "이동통신사 ID (SKT, KT, LGU, SKTMVNO, KTMVNO, LGUMVNO)",
+                },
+                "userName": {"type": "string", "description": "사용자 이름"},
+                "userBirthday": {"type": "string", "description": "생년월일 YYYYMMDD"},
+                "userPhone": {"type": "string", "description": "휴대폰 번호 (하이픈 제외)"},
+                "userRegistSingleNumber": {
+                    "type": "string",
+                    "description": "주민등록번호 뒷자리 첫 번째 숫자 (1~4)",
+                },
+            },
+            "required": ["providerId", "userName", "userBirthday", "userPhone", "userRegistSingleNumber"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "pino_verify_auth_number",
+        "description": "사용자가 입력한 SMS 인증번호를 검증하고 accessToken/refreshToken을 발급받습니다.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "authNumber": {"type": "string", "description": "SMS로 받은 6자리 인증번호"},
+            },
+            "required": ["authNumber"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "pino_apply_check",
+        "description": "본인인증 완료 후 선택한 서류의 신청 가능 여부 및 신청 옵션을 조회합니다.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "govDocId": {"type": "string", "description": "발급할 전자증명서 ID"},
+            },
+            "required": ["govDocId"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "pino_apply_sign",
+        "description": (
+            "전자 서명을 요청합니다. 기본발급이면 주민등록상 주소(requiredAt=Y) 옵션만 포함하고, "
+            "선택발급이면 사용자가 고른 추가 옵션도 포함하세요. "
+            "호출 후 사용자는 외부 앱(예: 네이버)에서 인증을 완료해야 합니다."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "govDocId": {"type": "string", "description": "전자증명서 ID"},
+                "applyOptionList": {
+                    "type": "array",
+                    "description": "apply_check 에서 받은 옵션 리스트 중 선택된 항목",
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["govDocId", "applyOptionList"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "pino_doc_apply",
+        "description": "외부 앱 인증 완료 후 전자증명서를 최종 발급합니다.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "govDocId": {"type": "string", "description": "전자증명서 ID"},
+            },
+            "required": ["govDocId"],
         },
     },
 ]

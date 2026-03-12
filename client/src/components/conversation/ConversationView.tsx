@@ -4,7 +4,6 @@ import { VoiceStateIndicator } from '@/components/voice/VoiceStateIndicator';
 import { MessageBubble } from './MessageBubble';
 import { WorkflowPanel } from './WorkflowPanel';
 import { pipelineBridge } from '@/services/pipelineBridge';
-import { issueBridge } from '@/services/issueBridge';
 
 export function ConversationView() {
   /* ── store 구독 ── */
@@ -12,15 +11,6 @@ export function ConversationView() {
   const partialTranscript   = useStore(s => s.partialTranscript);
   const voiceState          = useStore(s => s.voiceState);
   const isWorkflowOpen      = useStore(s => s.isWorkflowOpen);
-  const workflowCurrentStep = useStore(s => s.workflowCurrentStep); // 현재 단계 감지
-
-  /* verify 단계 + 동의 완료(폼 입력 단계)일 때 우측 100% 확장 */
-  const consentStatus = useStore(s => s.consentStatus);
-  const isVerifyStep  = isWorkflowOpen && workflowCurrentStep === 'verify' && consentStatus === 'agreed';
-
-  /* ── 발급 확인 모달 상태 (issueBridge 구독) ── */
-  const [issuePending, setIssuePending] = useState(false);
-  useEffect(() => issueBridge.subscribe(setIssuePending), []);
 
   /* ── 오답 수정 콜백 ── */
   const handleResolveCorrection = useCallback((messageId: string, accepted: boolean) => {
@@ -46,14 +36,13 @@ export function ConversationView() {
     >
       {/* ──────────────────────────────────────────
           좌측: 대화창
-          · verify 단계: display:none 으로 완전히 숨김
           · 워크플로우 열림: flex 0 0 50%
           · 워크플로우 닫힘: flex 1 (전체)
       ────────────────────────────────────────── */}
       <div
         style={{
-          flex:          isVerifyStep ? '0 0 0%' : isWorkflowOpen ? '0 0 50%' : 1,
-          display:       isVerifyStep ? 'none' : 'flex',
+          flex:          isWorkflowOpen ? '0 0 50%' : 1,
+          display:       'flex',
           minWidth:      0,
           flexDirection: 'column',
           position:      'relative',
@@ -152,16 +141,14 @@ export function ConversationView() {
       </div>
 
       {/* ──────────────────────────────────────────
-          우측: WorkflowPanel
-          · verify 단계: flex 1 1 100% (전체 너비)
-          · 그 외:       flex 0 0 50%
+          우측: WorkflowPanel — 항상 flex 0 0 50%
       ────────────────────────────────────────── */}
       {isWorkflowOpen && (
         <div
           style={{
-            flex:       isVerifyStep ? '1 1 100%' : '0 0 50%',
+            flex:       '0 0 50%',
             minWidth:   0,
-            borderLeft: isVerifyStep ? 'none' : '1px solid rgba(0, 0, 0, 0.08)',
+            borderLeft: '1px solid rgba(0, 0, 0, 0.08)',
             overflow:   'hidden',
             transition: 'flex 300ms ease',
           }}
@@ -169,111 +156,6 @@ export function ConversationView() {
           <WorkflowPanel />
         </div>
       )}
-      {/* ════════════════════════════════════════════════════════════
-          발급 확인 모달 — issue_document 호출 시 중앙에 표시
-          사용자가 "발급" 버튼을 눌러야 실제 발급 진행
-      ════════════════════════════════════════════════════════════ */}
-      {issuePending && (
-        <div
-          style={{
-            position:       'absolute',
-            inset:          0,
-            background:     'rgba(0, 0, 0, 0.45)',
-            backdropFilter: 'blur(4px)',
-            zIndex:         200,
-            display:        'flex',
-            alignItems:     'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            style={{
-              background:   '#ffffff',
-              borderRadius: 24,
-              padding:      '52px 60px',
-              textAlign:    'center',
-              boxShadow:    '0 20px 60px rgba(0,0,0,0.25)',
-              maxWidth:     520,
-              width:        '90%',
-              animation:    'issueModalIn 0.25s cubic-bezier(0.34,1.56,0.64,1)',
-            }}
-          >
-            {/* 아이콘 */}
-            <div
-              style={{
-                width:          80,
-                height:         80,
-                borderRadius:   '50%',
-                background:     'rgba(59,130,246,0.1)',
-                display:        'flex',
-                alignItems:     'center',
-                justifyContent: 'center',
-                margin:         '0 auto 24px',
-              }}
-            >
-              <svg width={40} height={40} viewBox="0 0 24 24" fill="none">
-                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"
-                  stroke="#3b82f6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
-                <polyline points="14 2 14 8 20 8"
-                  stroke="#3b82f6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
-
-            <h2 style={{ fontSize: 28, fontWeight: 700, color: '#1e293b', margin: '0 0 12px' }}>
-              서류를 발급하시겠습니까?
-            </h2>
-            <p style={{ fontSize: 18, color: '#64748b', margin: '0 0 36px', lineHeight: 1.6 }}>
-              본인확인이 완료되었습니다.<br/>
-              아래 버튼을 눌러 서류를 발급해 주세요.
-            </p>
-
-            <div style={{ display: 'flex', gap: 16 }}>
-              <button
-                onClick={() => issueBridge.cancel()}
-                style={{
-                  flex:         1,
-                  padding:      '18px 0',
-                  borderRadius: 14,
-                  fontSize:     18,
-                  fontWeight:   600,
-                  background:   '#f1f5f9',
-                  border:       '1px solid rgba(0,0,0,0.08)',
-                  color:        '#64748b',
-                  cursor:       'pointer',
-                  fontFamily:   'inherit',
-                }}
-              >
-                취소
-              </button>
-              <button
-                onClick={() => issueBridge.confirm()}
-                style={{
-                  flex:         2,
-                  padding:      '18px 0',
-                  borderRadius: 14,
-                  fontSize:     20,
-                  fontWeight:   700,
-                  background:   'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                  border:       'none',
-                  color:        '#ffffff',
-                  cursor:       'pointer',
-                  fontFamily:   'inherit',
-                  boxShadow:    '0 4px 16px rgba(59,130,246,0.4)',
-                }}
-              >
-                📄 발급하기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <style>{`
-        @keyframes issueModalIn {
-          from { opacity: 0; transform: scale(0.85); }
-          to   { opacity: 1; transform: scale(1); }
-        }
-      `}</style>
     </div>
   );
 }

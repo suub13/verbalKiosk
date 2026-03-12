@@ -15,12 +15,13 @@
  */
 
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { useStore } from '@/store';
-import type { WorkflowStep, ConsentStatus } from '@/store/slices/conversationSlice';
+import type { WorkflowStep } from '@/store/slices/conversationSlice';
 import { getServiceDefinition } from '@/services/definitions/registry';
 import { KioskIdentityForm } from '@/components/conversation/KioskIdentityForm';
 import { pipelineBridge } from '@/services/pipelineBridge';
+import { issueBridge } from '@/services/issueBridge';
 
 const GENERIC_STEPS = [
   { key: 'search', label: '서류 검색' },
@@ -35,12 +36,12 @@ export const WorkflowPanel: React.FC = () => {
   const selectedServiceId = useStore(s => s.selectedServiceId);
   const serviceData = useStore(s => s.serviceData);
   const formServiceName = useStore(s => s.formServiceName);
-  const consentStatus   = useStore(s => s.consentStatus);
 
   const definition = getServiceDefinition(selectedServiceId);
 
   /* verify 단계 + 동의 완료(폼 입력) 시에만 상세 영역을 overflow:hidden 으로 전환 */
-  const isVerifyFormPhase = currentStep === 'verify' && consentStatus === 'agreed';
+  // verify 단계에서는 항상 KioskIdentityForm을 전체 높이로 표시
+  const isVerifyFormPhase = currentStep === 'verify';
 
   const steps = useMemo(
     () => definition ? definition.getSteps(serviceData) : GENERIC_STEPS,
@@ -224,115 +225,234 @@ function StepDetail({ step, definition, serviceData }: StepDetailProps) {
 }
 
 /* ════════════════════════════════════════════════════════════
-   VerifyDetail — 2단계 UI
-   ─────────────────────────────────────────────────────────────
-   Phase 1 (pending / declined): 개인정보 수집 동의 안내 화면
-     → AI 가 consentScript 를 읽고 동의 여부를 음성으로 확인
-     → 동의하면 submit_identity_verification(consent:true) 호출
-     → consentStatus='agreed' 로 변경되면 Phase 2 로 자동 전환
-   Phase 2 (agreed): KioskIdentityForm 전체화면
-     → 사용자가 키보드로 정보 입력 후 "본인인증 완료" 버튼 클릭
-     → pipelineBridge 로 identity_completed 신호를 AI 에 전송
+   VerifyDetail — Pino 본인인증 UI
+   서류 선택 직후 바로 KioskIdentityForm 을 표시합니다.
+   Step 1: 정보 입력 → /api/pino/identity/verify (SMS 발송)
+   Step 2: 인증번호 입력 → /api/pino/identity/result (토큰 발급)
+   완료 시 pipelineBridge 로 identity_verified 신호 전달
 ════════════════════════════════════════════════════════════ */
 function VerifyDetail() {
-  const reason = useStore(s => s.consentReason);
-  const status = useStore(s => s.consentStatus) as ConsentStatus;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const getStore = () => useStore.getState() as any;
+  const [micOpen, setMicOpen] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* ── Phase 2: 동의 완료 → KioskIdentityForm ── */
-  if (status === 'agreed') {
-    const handleComplete = (data: {
-      name: string; rrnFront: string; rrnBack: string; phone: string; carrier: string;
-    }) => {
-      getStore().setPhoneNumber?.(data.phone);
-      getStore().setPhoneVerified?.(true);
-      /* sendOptionsConfirmed 채널 재사용 → realtimeProxy 가 identity_completed 신호를 AI 에 전달 */
-      pipelineBridge.sendOptionsConfirmed?.(
-        JSON.stringify({ identity_completed: true, phone: data.phone, carrier: data.carrier }),
-      );
+  // 도움 버튼: 10초간 마이크 임시 열기
+  const handleHelpPress = useCallback(async () => {
+    if (micOpen) return;
+    setMicOpen(true);
+    setCountdown(10);
+    // useVoicePipeline의 isMuted effect가 setMuted(false)를 감지해 startCapture 자동 호출
+    const { useStore } = await import('@/store');
+    useStore.getState().setMuted(false);
+
+    let secs = 10;
+    const tick = async () => {
+      secs -= 1;
+      setCountdown(secs);
+      if (secs <= 0) {
+        setMicOpen(false);
+        const { useStore: s } = await import('@/store');
+        s.getState().setMuted(true);
+      } else {
+        timerRef.current = setTimeout(tick, 1000);
+      }
     };
+    timerRef.current = setTimeout(tick, 1000);
+  }, [micOpen]);
 
-    const handleCancel = () => {
-      /* 취소 → Phase 1 로 복귀 */
-      getStore().setConsentStatus?.('declined');
-    };
-
-    return (
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <KioskIdentityForm onComplete={handleComplete} onCancel={handleCancel} />
-      </div>
-    );
-  }
-
-  /* ── Phase 1: 동의 대기 / 거부 ── */
-  const statusColor = status === 'declined' ? '#dc2626' : '#d97706';
-  const statusLabel = status === 'declined' ? '동의 거부' : '동의 대기 중';
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   return (
-    <div style={{ padding: '4px 0' }}>
-      <h3 style={detailTitleStyle}>본인확인</h3>
-      <p style={detailDescStyle}>{reason || '서류 발급'}을 위해 본인확인이 필요합니다.</p>
-
-      {/* 상태 뱃지 */}
-      <div
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 10,
-          padding: '8px 20px', borderRadius: 24,
-          background: `${statusColor}12`, border: `1px solid ${statusColor}30`,
-          marginBottom: 24,
-        }}
-      >
-        <span
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
+      <KioskIdentityForm />
+      {/* 도움 버튼 — verify 중 마이크가 꺼져있을 때 임시로 열어주는 버튼 */}
+      <div style={{
+        position: 'absolute', bottom: 80, right: 16,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+      }}>
+        <button
+          onMouseDown={e => { e.preventDefault(); handleHelpPress(); }}
+          disabled={micOpen}
           style={{
-            width: 10, height: 10, borderRadius: '50%', background: statusColor,
-            animation: status === 'pending' ? 'wf-pulse 1.5s infinite' : 'none',
+            width: 64, height: 64, borderRadius: '50%', border: 'none', cursor: micOpen ? 'default' : 'pointer',
+            background: micOpen ? '#10B981' : '#F59E0B',
+            color: '#fff', fontSize: 26, boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+            transition: 'all 0.2s',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
-        />
-        <span style={{ fontSize: 20, fontWeight: 600, color: statusColor }}>{statusLabel}</span>
+        >
+          {micOpen ? '🎙️' : '🎙️'}
+        </button>
+        <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 600, textAlign: 'center' }}>
+          {micOpen ? `${countdown}초` : '도움말'}
+        </span>
       </div>
-
-      {/* 수집 항목 카드 */}
-      <div style={cardStyle}>
-        <FieldRow label="수집 항목" value="이름, 주민등록번호, 통신사, 휴대전화번호" />
-        <div style={{ borderTop: '1px solid rgba(0,0,0,0.06)', margin: '10px 0' }} />
-        <FieldRow label="수집 목적" value="본인확인" />
-        <div style={{ borderTop: '1px solid rgba(0,0,0,0.06)', margin: '10px 0' }} />
-        <FieldRow label="보유 기간" value="세션 종료 시 즉시 삭제" />
-      </div>
-
-      {status === 'pending' && (
-        <div style={{ marginTop: 20, fontSize: 20, color: '#475569', lineHeight: 1.6 }}>
-          음성으로 <strong style={{ color: '#1e293b' }}>"동의합니다"</strong>라고 말씀해 주세요.
-        </div>
-      )}
-
-      {status === 'declined' && (
-        <div style={{ marginTop: 20, fontSize: 18, color: '#dc2626', lineHeight: 1.6,
-          background: 'rgba(220,38,38,0.06)', padding: '14px 18px', borderRadius: 10 }}>
-          동의를 거부하셨습니다. 서류 발급을 진행할 수 없습니다.
-        </div>
-      )}
     </div>
   );
 }
 
-/* ── Issue step (generic success) ── */
+
+/* ── Issue(출력) 단계 — 출력하기 버튼 인라인 표시 ── */
 function IssueDetail() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: 72 }}>
-      <div
-        style={{
+  const [printState, setPrintState] = useState<'waiting' | 'printing' | 'done'>(() =>
+    issueBridge.isPending() ? 'waiting' : 'done'
+  );
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 출력하기 버튼 클릭 → printing 로딩 → confirm 후 done
+  // done 상태: AI가 음성으로 질문, 사용자 음성 응답 대기
+  // 10초 무응답 → 클라이언트가 직접 resetConversation (파이프라인 건드리지 않음)
+  const handlePrint = useCallback(() => {
+    setPrintState('printing');
+    issueBridge.confirm(); // AI sendResult → AI가 음성으로 질문
+    setTimeout(() => {
+      setPrintState('done');
+      // 10초 무응답 시 조용히 종료 (sendResult 재호출 없음 — 파이프라인 보호)
+      timeoutRef.current = setTimeout(() => {
+        useStore.getState().resetConversation();
+      }, 10000);
+    }, 2200);
+  }, []);
+
+  // 언마운트 시 타이머 정리 (reset_workflow / end_session 으로 컴포넌트가 내려갈 때)
+  useEffect(() => {
+    return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
+  }, []);
+
+  /* ── 출력 중 로딩 화면 ── */
+  if (printState === 'printing') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: 64, gap: 28 }}>
+        <style>{`
+          @keyframes print-roll {
+            0%   { transform: translateY(0); opacity: 1; }
+            40%  { transform: translateY(18px); opacity: 0.3; }
+            60%  { transform: translateY(-18px); opacity: 0.3; }
+            100% { transform: translateY(0); opacity: 1; }
+          }
+          @keyframes print-bar {
+            0%   { width: 0%; }
+            100% { width: 100%; }
+          }
+          @keyframes dot-blink {
+            0%, 80%, 100% { opacity: 0; }
+            40%            { opacity: 1; }
+          }
+        `}</style>
+
+        {/* 프린터 아이콘 애니메이션 */}
+        <div style={{ position: 'relative', width: 96, height: 96 }}>
+          <div style={{
+            width: 96, height: 96, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 4px 20px rgba(59,130,246,0.18)',
+          }}>
+            <svg width={50} height={50} viewBox="0 0 24 24" fill="none">
+              {/* 프린터 본체 */}
+              <rect x="4" y="8" width="16" height="10" rx="2"
+                fill="#3b82f6" opacity="0.15" stroke="#3b82f6" strokeWidth="1.5" strokeLinejoin="round"/>
+              {/* 용지 위쪽 */}
+              <path d="M8 8V5a1 1 0 011-1h6a1 1 0 011 1v3"
+                stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              {/* 용지 나오는 부분 — 애니메이션 */}
+              <rect x="7" y="14" width="10" height="7" rx="1"
+                fill="#fff" stroke="#3b82f6" strokeWidth="1.5" strokeLinejoin="round"
+                style={{ animation: 'print-roll 1.4s ease-in-out infinite' }}/>
+              {/* 인쇄 선 */}
+              <line x1="9" y1="16.5" x2="15" y2="16.5" stroke="#93c5fd" strokeWidth="1.2" strokeLinecap="round"
+                style={{ animation: 'print-roll 1.4s ease-in-out infinite' }}/>
+              <line x1="9" y1="18.5" x2="13" y2="18.5" stroke="#93c5fd" strokeWidth="1.2" strokeLinecap="round"
+                style={{ animation: 'print-roll 1.4s ease-in-out infinite' }}/>
+              {/* 상태 표시 점 */}
+              <circle cx="17.5" cy="11" r="1.2" fill="#3b82f6"/>
+            </svg>
+          </div>
+        </div>
+
+        <div style={{ textAlign: 'center' }}>
+          <h3 style={{ fontSize: 26, fontWeight: 700, color: '#1e293b', margin: '0 0 8px' }}>
+            출력 중
+            <span style={{ display: 'inline-flex', gap: 3, marginLeft: 4, verticalAlign: 'middle' }}>
+              {[0, 1, 2].map(i => (
+                <span key={i} style={{
+                  display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#3b82f6',
+                  animation: `dot-blink 1.2s ${i * 0.2}s infinite`,
+                }}/>
+              ))}
+            </span>
+          </h3>
+          <p style={{ fontSize: 18, color: '#64748b', margin: 0 }}>서류를 출력하고 있습니다. 잠시만 기다려 주세요.</p>
+        </div>
+
+        {/* 진행바 */}
+        <div style={{ width: '100%', maxWidth: 360, height: 8, borderRadius: 4, background: '#e2e8f0', overflow: 'hidden' }}>
+          <div style={{
+            height: '100%', borderRadius: 4,
+            background: 'linear-gradient(90deg, #3b82f6, #60a5fa)',
+            animation: 'print-bar 2s ease-out forwards',
+          }}/>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── 출력 완료 화면 ── */
+  if (printState === 'done') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: 72, gap: 12 }}>
+        <style>{`
+          @keyframes done-pop {
+            0%   { transform: scale(0.7); opacity: 0; }
+            70%  { transform: scale(1.1); }
+            100% { transform: scale(1); opacity: 1; }
+          }
+        `}</style>
+        <div style={{
           width: 100, height: 100, borderRadius: '50%', background: '#dcfce7',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 24,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+          animation: 'done-pop 0.45s cubic-bezier(0.34,1.56,0.64,1) both',
+        }}>
+          <svg width={50} height={50} viewBox="0 0 24 24" fill="none">
+            <path d="M5 13l4 4L19 7" stroke="#16a34a" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <h3 style={{ fontSize: 30, fontWeight: 700, color: '#16a34a', margin: 0 }}>출력 완료</h3>
+        <p style={{ fontSize: 21, color: '#6b7280', margin: 0 }}>서류가 출력되었습니다.</p>
+      </div>
+    );
+  }
+
+  /* ── 출력 대기 화면 — 출력하기 버튼 인라인 ── */
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 24px', gap: 20 }}>
+      <div style={{ fontSize: 56 }}>🖨️</div>
+      <h2 style={{ fontSize: 26, fontWeight: 700, color: '#1e293b', textAlign: 'center', margin: 0 }}>
+        서류 출력 준비 완료
+      </h2>
+      <p style={{ fontSize: 18, color: '#64748b', textAlign: 'center', lineHeight: 1.7, margin: 0 }}>
+        본인확인이 완료되었습니다.<br />
+        아래 버튼을 눌러 서류를 출력해 주세요.
+      </p>
+      <div style={{
+        padding: '14px 28px', borderRadius: 12,
+        background: '#EFF6FF', border: '1px solid #BFDBFE',
+        color: '#1d4ed8', fontSize: 15, fontWeight: 600,
+      }}>
+        출력 버튼을 누르면 즉시 출력이 시작됩니다
+      </div>
+      <button
+        onMouseDown={e => { e.preventDefault(); handlePrint(); }}
+        style={{
+          width: '100%', maxWidth: 420, padding: '22px 0', borderRadius: 16, border: 'none',
+          background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+          color: '#fff', fontSize: 24, fontWeight: 700, cursor: 'pointer',
+          boxShadow: '0 4px 16px rgba(59,130,246,0.35)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
         }}
       >
-        <svg width={50} height={50} viewBox="0 0 24 24" fill="none">
-          <path d="M5 13l4 4L19 7" stroke="#16a34a" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </div>
-      <h3 style={{ fontSize: 30, fontWeight: 700, color: '#16a34a', margin: '0 0 10px' }}>발급 완료</h3>
-      <p style={{ fontSize: 21, color: '#6b7280' }}>서류가 출력되고 있습니다. 잠시만 기다려 주세요.</p>
+        🖨️ 출력하기
+      </button>
     </div>
   );
 }

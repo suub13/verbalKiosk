@@ -15,15 +15,15 @@ interface KioskLayoutProps {
 export const KioskLayout: React.FC<KioskLayoutProps> = ({ children }) => {
   return (
     <div className="kiosk-layout">
-      <div className="kiosk-layout__header">
+      {/* <div className="kiosk-layout__header">
         <Header />
-      </div>
+      </div> */}
       <main className="kiosk-layout__content">
         {children}
       </main>
-      <div className="kiosk-layout__footer">
+      {/* <div className="kiosk-layout__footer">
         <Footer />
-      </div>
+      </div> */}
     </div>
   );
 };

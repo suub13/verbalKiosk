@@ -25,6 +25,7 @@ from routes.tts import router as tts_router
 from routes.chat import router as chat_router
 from routes.document import router as document_router
 from routes.transcribe_phone import router as transcribe_phone_router
+from routes.pino import router as pino_router
 from websocket.realtime_proxy import (
     handle_realtime_ws,
     handle_options_confirmed_rest,
@@ -61,6 +62,7 @@ app.include_router(tts_router, prefix="/api/tts")
 app.include_router(chat_router, prefix="/api/chat")
 app.include_router(document_router, prefix="/api/document")
 app.include_router(transcribe_phone_router, prefix="/api/transcribe-phone")
+app.include_router(pino_router, prefix="/api/pino")
 
 @app.get("/api/health")
 async def health():

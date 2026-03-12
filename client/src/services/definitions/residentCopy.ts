@@ -1,18 +1,42 @@
 import React from 'react';
 import type { ClientServiceDefinition } from './types';
-import { AddressDetail, TypeDetail, OptionsDetail } from './residentCopyStepRenderer';
+import { AddressDetail, TypeDetail, OptionsDetail, SignDetail } from './residentCopyStepRenderer';
 import { useStore } from '@/store';
 import { pipelineBridge } from '@/services/pipelineBridge';
+
+export interface ApplyOptionItem {
+  code: string;
+  name: string;
+  desc?: string;
+}
+
+export interface ApplyOptionGroup {
+  groupCode: string;
+  groupCodeName: string;
+  multiAbleAt: 'Y' | 'N';
+  requiredAt: 'Y' | 'N';
+  childList: ApplyOptionItem[];
+}
 
 export interface ResidentCopyData {
   sido: string | null;
   sigungu: string | null;
+  sigunguCode: string | null;
   issuanceType: 'basic' | 'custom' | null;
   issuanceOptions: Record<string, boolean>;
   addressHistoryMode: 'all' | 'custom';
   addressHistoryYears: number;
+  addressHistoryYearsInput: string;
   pendingOptionCallId: string | null;
-  [key: string]: unknown; // satisfies Record<string, unknown> assignment
+  pinoAccessToken: string | null;
+  pinoRefreshToken: string | null;
+  pinoCarrier: string | null;
+  pinoPhone: string | null;
+  pinoGovDocId: string | null;
+  pinoApplyOptionList: ApplyOptionGroup[];
+  pinoSignToken: string | null;
+  customOptionSelections: Record<string, string[]>;
+  [key: string]: unknown;
 }
 
 export interface IssuanceOptionGroup {
@@ -52,7 +76,7 @@ export const ISSUANCE_CHECKBOX_GROUPS: IssuanceOptionGroup[] = [
   },
 ];
 
-/** Confirm custom issuance options — called from OptionsDetail UI */
+/** Confirm custom issuance options — called from OptionsDetail UI (legacy, now handled inline) */
 export function confirmResidentCopyOptions(): void {
   const store = useStore.getState();
   const data = store.serviceData as ResidentCopyData;
@@ -61,17 +85,10 @@ export function confirmResidentCopyOptions(): void {
     success: true,
     type: 'custom',
     options: data.issuanceOptions,
-    addressHistory: data.addressHistoryMode === 'all'
-      ? { mode: 'all' }
-      : { mode: 'custom', years: data.addressHistoryYears },
   });
 
-  // Try WebSocket first
   const sendWs = pipelineBridge.sendOptionsConfirmed;
-  if (sendWs) {
-    try { sendWs(payload); } catch { /* ignore */ }
-  }
-  // Always send REST fallback
+  if (sendWs) { try { sendWs(payload); } catch { /* ignore */ } }
   fetch('/api/realtime/options-confirmed', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -79,7 +96,6 @@ export function confirmResidentCopyOptions(): void {
   }).catch(() => {});
 
   store.patchServiceData({ pendingOptionCallId: null });
-  store.goToWorkflowStep('verify');
 }
 
 /** Cancel custom issuance options — called from OptionsDetail UI */
@@ -108,13 +124,14 @@ export const residentCopyDefinition: ClientServiceDefinition = {
   getSteps(serviceData) {
     const d = serviceData as ResidentCopyData;
     return [
+      { key: 'verify', label: '본인인증' },
       { key: 'address', label: '주소 입력' },
       { key: 'type', label: '발급형태 선택' },
       ...(d.issuanceType !== 'basic'
         ? [{ key: 'options', label: '발급옵션 선택' }]
         : []),
-      { key: 'verify', label: '본인확인' },
-      { key: 'issue', label: '발급' },
+      { key: 'sign', label: '전자서명' },
+      { key: 'issue', label: '출력' },
     ];
   },
 
@@ -124,6 +141,7 @@ export const residentCopyDefinition: ClientServiceDefinition = {
       case 'address': return React.createElement(AddressDetail, { data: d });
       case 'type':    return React.createElement(TypeDetail, { data: d });
       case 'options': return React.createElement(OptionsDetail, { data: d });
+      case 'sign':    return React.createElement(SignDetail, { data: d });
       default:        return null; // let WorkflowPanel handle verify, issue
     }
   },
@@ -131,15 +149,25 @@ export const residentCopyDefinition: ClientServiceDefinition = {
   initialData: {
     sido: null,
     sigungu: null,
+    sigunguCode: null,
     issuanceType: null,
     issuanceOptions: {},
     addressHistoryMode: 'custom',
     addressHistoryYears: 1,
+    addressHistoryYearsInput: '1',
     pendingOptionCallId: null,
+    pinoAccessToken: null,
+    pinoRefreshToken: null,
+    pinoCarrier: null,
+    pinoPhone: null,
+    pinoGovDocId: null,
+    pinoApplyOptionList: [],
+    pinoSignToken: null,
+    customOptionSelections: {},
   } as ResidentCopyData,
 
   resetFromStep(step, data) {
-    const stepResetOrder = ['address', 'type', 'options', 'verify', 'issue'];
+    const stepResetOrder = ['address', 'type', 'options', 'sign', 'verify', 'issue'];
     const targetIdx = stepResetOrder.indexOf(step);
     if (targetIdx < 0) return data;
 
@@ -188,15 +216,29 @@ export const residentCopyDefinition: ClientServiceDefinition = {
 
         const hasBoth = !!(parsed.sido && parsed.sigungu);
 
+        // Find sigunguCode from applyOptionList (required for Pino apply_sign)
+        let sigunguCode: string | null = null;
+        const currentData = store.serviceData as ResidentCopyData;
+        const addrGroup = (currentData.pinoApplyOptionList ?? []).find(
+          (g: ApplyOptionGroup) => g.groupCode === '30000100001'
+        );
+        if (addrGroup && parsed.sido && parsed.sigungu) {
+          const match = addrGroup.childList.find(
+            (c: ApplyOptionItem) =>
+              c.name === `${parsed.sido} ${parsed.sigungu}` || c.name.includes(parsed.sigungu)
+          );
+          if (match) { sigunguCode = match.code; store.patchServiceData({ sigunguCode }); }
+        }
         ctx.sendResult(callId, {
           success: true,
           sido: parsed.sido,
           sigungu: parsed.sigungu || null,
+          sigunguCode,
           addressComplete: hasBoth,
           nextAction: hasBoth
-            ? `선택하신 주소는 "${parsed.sido} ${parsed.sigungu}"입니다. 사용자에게 주소를 확인해준 후("맞으시면 네라고...") 확인을 받은 다음, navigate_step("type")을 호출하고 발급형태(기본발급/선택발급)를 물어보세요.`
+            ? `주소가 "${parsed.sido} ${parsed.sigungu}"로 설정되었습니다. 사용자에게 "${parsed.sido} ${parsed.sigungu}로 설정되었습니다."라고 한 마디만 확인해준 후 바로 navigate_step("type")을 호출하고 발급형태를 물어보세요. 추가 확인 질문은 하지 마세요.`
             : hadSido
-              ? `시/도가 "${parsed.sido}"(으)로 변경되었습니다. 사용자에게 변경 사실을 확인해준 후("네, ${parsed.sido}(으)로 변경했습니다.") 시/군/구를 물어보세요.`
+              ? `시/도가 "${parsed.sido}"(으)로 변경되었습니다. "${parsed.sido}로 변경했습니다."라고 짧게 안내 후 시/군/구를 물어보세요.`
               : '시/군/구를 아직 입력받지 않았습니다. 반드시 시/군/구를 물어본 후 set_address를 다시 호출하세요.',
         });
       } catch {
@@ -230,7 +272,7 @@ export const residentCopyDefinition: ClientServiceDefinition = {
           ctx.sendResult(callId, {
             success: true, type: 'basic',
             message: '기본발급 선택됨.',
-            guidance: '사용자에게 "기본발급으로 선택되었습니다. 이제 본인확인을 진행하겠습니다."라고 음성으로 안내한 후, navigate_step("verify")를 호출하고 request_identity_verification을 호출하세요.',
+            guidance: '기본발급으로 선택되었습니다. 사용자에게 "기본발급으로 선택되었습니다. 전자서명을 진행하겠습니다."라고 안내한 후 navigate_step("sign")을 호출하세요.',
           });
         } else {
           // Initialize default options for custom issuance

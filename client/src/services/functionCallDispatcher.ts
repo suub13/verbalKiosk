@@ -1,14 +1,3 @@
-/**
- * functionCallDispatcher — handles all client-side function calls from the AI.
- *
- * Dispatch order:
- *   1. Service-specific handlers (from getServiceDefinition().functionHandlers)
- *   2. Shared handlers (navigate_step, identity verification, issue, form, etc.)
- *
- * To add handlers for a new service: put them in that service's definition file.
- * No changes needed here.
- */
-
 import { useStore } from '@/store';
 import type { Message } from '@/store/slices/conversationSlice';
 import { getServiceDefinition } from '@/services/definitions/registry';
@@ -81,11 +70,26 @@ export function dispatchFunctionCall(
         }
       }
 
+      // verify 단계로 이동 시 consentStatus를 'agreed'로 설정 → full-width 모드 활성화
+      if (parsed.step === 'verify') {
+        store.setConsentStatus('agreed');
+      }
+
+      // 마이크 비활성 단계 진입 시 voiceState를 idle로 전환
+      const MIC_INACTIVE_STEPS = ['verify', 'options', 'sign', 'issue'];
+      if (MIC_INACTIVE_STEPS.includes(parsed.step)) {
+        const vs = store.voiceState;
+        if (vs !== 'idle' && vs !== 'speaking' && vs !== 'error') {
+          store.transition('speaking');
+        }
+      }
+
       store.goToWorkflowStep(parsed.step);
 
       const stepGuidance: Record<string, string> = {
-        verify: '화면이 본인확인 단계로 전환되었습니다. 반드시 request_identity_verification을 호출하여 개인정보 수집 동의 안내를 음성으로 시작하세요.',
-        issue: '화면이 발급 단계로 전환되었습니다. issue_document를 호출하세요.',
+        verify: '화면이 본인인증 단계로 전환되었습니다. 화면에 본인인증 폼이 표시되었습니다. 사용자에게 "이름, 생년월일, 주민번호 뒷자리 1자리, 통신사, 휴대폰 번호를 화면에 입력해 주세요"라고 안내하세요. 사용자가 인증번호를 받아 인증까지 완료하면 시스템 메시지가 전달됩니다. 완료 전까지 다음 function call을 호출하지 마세요.',
+        issue: '화면이 출력 단계로 전환되었습니다. 사용자에게 "서류를 출력하시겠습니까? 출력하시려면 화면의 출력하기 버튼을 눌러주세요."라고 안내하고, 사용자가 버튼을 누를 때까지 기다리세요. issue_document를 직접 호출하지 마세요.',
+        sign:  '화면이 전자서명 단계로 전환되었습니다. 화면에 전자서명 방법 선택 UI가 표시되어 있습니다. 사용자에게 "화면에서 전자서명 방법을 선택하고 전자증명서를 신청해 주세요."라고 안내하세요. 사용자가 전자서명을 완료하면 시스템 메시지가 전달됩니다. 완료 전까지 다음 함수를 호출하지 마세요.',
       };
 
       sendResult(callId, {
@@ -110,7 +114,10 @@ export function dispatchFunctionCall(
         if (!store.selectedServiceId) {
           store.setSelectedService('resident-copy', '주민등록등본');
         }
-        store.goToWorkflowStep('address');
+        // 본인인증이 첫 번째 단계 → 마이크 비활성
+        const vs1 = store.voiceState;
+        if (vs1 !== 'idle' && vs1 !== 'speaking' && vs1 !== 'error') store.transition('speaking');
+        store.goToWorkflowStep('verify');
       } else {
         const serviceId = parsed.serviceId || '';
         if (SERVICE_NAME_MAP[serviceId]) {
@@ -133,6 +140,9 @@ export function dispatchFunctionCall(
     } catch {
       store.setConsentReason('서류 발급');
     }
+    store.setConsentStatus('agreed');
+    const vs2 = store.voiceState;
+    if (vs2 !== 'idle' && vs2 !== 'speaking' && vs2 !== 'error') store.transition('speaking');
     store.goToWorkflowStep('verify');
     return true; // server-handled, no client result needed
   }
@@ -178,36 +188,43 @@ export function dispatchFunctionCall(
     return true;
   }
 
-  // ── issue_document → 발급 확인 모달 표시 (ConversationView 중앙) ──
-  // issueBridge 를 통해 중앙 확인 모달을 열고,
-  // 사용자가 "발급" 버튼을 누를 때만 실제로 issue 단계로 진행한다.
+    // ── issue_document → 출력 단계 화면으로 전환 + 출력하기 버튼 표시 ──
+  // 즉시 출력 단계 화면으로 이동하고 사용자가 버튼 클릭 시 완료 안내
   if (name === 'issue_document') {
+    // 1) pending 먼저 설정 → IssueDetail 마운트 시 isPending()=true 보장
     issueBridge.setPending(true, () => {
-      store.goToWorkflowStep('issue');
       sendResult(callId, {
         success: true,
-        message: '서류가 발급되었습니다.',
+        message: '서류가 출력되었습니다.',
         receiptNumber: `GOV-${Date.now().toString(36).toUpperCase()}`,
         guidance:
-          '서류 발급이 완료되었습니다. ' +
-          '사용자에게 다음 두 문장을 순서대로 음성으로 안내해 주세요. ' +
-          '첫째: "출력되었습니다." ' +
-          '둘째: "다른 도움이 필요하세요? 필요하지 않으시면 종료 버튼을 눌러주세요."',
+          '서류 출력이 완료되었습니다. ' +
+          '반드시 사용자에게 음성으로 "출력이 완료되었습니다. 다른 서류가 필요하신가요?" 라고 질문하세요. ' +
+          '사용자가 "있어요" 또는 추가 서류를 원하면 "네, 안내해드리겠습니다." 말한 후 reset_workflow()를 호출하세요. ' +
+          '사용자가 "없어요" 또는 종료를 원하면 "이용해 주셔서 감사합니다. 안녕히 가세요." 말한 후 end_session()을 호출하세요. ' +
+          '반드시 사용자 응답을 기다리세요. 절대로 자동으로 종료하거나 reset하지 마세요.',
       });
-      addMessage('system', '서류 발급이 완료되었습니다.');
+      addMessage('system', '서류 출력이 완료되었습니다.');
     });
-    // AI 에게 모달이 열렸음을 즉시 알림 (무한 대기 방지)
+    // 2) pending 설정 후 step 이동 → IssueDetail 마운트 시 isPending()=true 보장
+    const vs3 = store.voiceState;
+    if (vs3 !== 'idle' && vs3 !== 'speaking' && vs3 !== 'error') store.transition('speaking');
+    store.goToWorkflowStep('issue');
+    // 3) AI 에게 '출력하기 버튼을 눌러달라'고만 안내 — 완료 메시지는 버튼 클릭 후 전송됨
     sendResult(callId, {
       success: true,
-      pending_confirmation: true,
+      pending_user_action: true,
       guidance:
-        '화면에 발급 확인 모달이 표시되었습니다. ' +
-        '사용자에게 "화면에서 발급 버튼을 눌러주세요."라고 안내하세요.',
+        '화면이 출력 단계로 전환되었습니다. ' +
+        '사용자에게 "화면의 출력하기 버튼을 눌러주세요."라고 안내하세요. ' +
+        '사용자가 버튼을 누를 때까지 기다리세요. ' +
+        '이 시점에서 완료 멘트나 다음 안내를 하지 마세요. 버튼 클릭 안내만 하세요.',
     });
     return true;
   }
 
-  // ── open_service_form → 'fill' step (generic) ──
+
+    // ── open_service_form → 'fill' step (generic) ──
   if (name === 'open_service_form') {
     try {
       const parsed = JSON.parse(args);
@@ -257,6 +274,13 @@ export function dispatchFunctionCall(
     setPendingCorrection('처음부터 다시');
     store.resetWorkflow();
     sendResult(callId, { success: true, message: 'Workflow reset' });
+    return true;
+  }
+
+  // ── end_session → 전체 종료 ──
+  if (name === 'end_session') {
+    sendResult(callId, { success: true });
+    setTimeout(() => useStore.getState().resetConversation(), 1000);
     return true;
   }
 

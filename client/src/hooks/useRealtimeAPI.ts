@@ -35,6 +35,10 @@ export function useRealtimeAPI() {
   // onPlaybackEnd 콜백에서 기계음을 재생할 때, 실제 AI 응답 종료 후인지 확인합니다.
   // 바지인 등으로 인한 playback 중단 시 기계음이 울리지 않도록 방지합니다.
   const aiResponseActiveRef = useRef(false);
+  // AI 텍스트 transcript를 유저 transcript 도착 전까지 보류
+  const aiTranscriptBufferRef = useRef<string>('');
+  const aiTranscriptDoneRef = useRef<string | null>(null);
+  const aiTranscriptHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const transition = useStore(s => s.transition);
   const setPartialTranscript = useStore(s => s.setPartialTranscript);
@@ -112,6 +116,22 @@ export function useRealtimeAPI() {
       }
     });
 
+    /** 보류 중인 AI transcript 버퍼를 화면에 flush */
+    function flushAiTranscript() {
+      if (aiTranscriptHoldTimerRef.current) { clearTimeout(aiTranscriptHoldTimerRef.current); aiTranscriptHoldTimerRef.current = null; }
+      const buffered = aiTranscriptBufferRef.current;
+      aiTranscriptBufferRef.current = '';
+      if (buffered) {
+        setPartialTranscript(useStore.getState().partialTranscript + buffered);
+      }
+      const done = aiTranscriptDoneRef.current;
+      aiTranscriptDoneRef.current = null;
+      if (done !== null) {
+        addMessage('assistant', done, true);
+        setPartialTranscript('');
+      }
+    }
+
     const callbacks: RealtimePipelineCallbacks = {
       /** WebSocket 연결 상태 변경 처리 */
       onStateChange: (state) => {
@@ -128,6 +148,10 @@ export function useRealtimeAPI() {
 
       /** 사용자 발화 종료: 처리 중 상태로 전환 및 플레이스홀더 메시지 생성 */
       onSpeechStopped: () => {
+        // AI 텍스트 버퍼 초기화 (새 발화 시작)
+        aiTranscriptBufferRef.current = '';
+        aiTranscriptDoneRef.current = null;
+        if (aiTranscriptHoldTimerRef.current) { clearTimeout(aiTranscriptHoldTimerRef.current); aiTranscriptHoldTimerRef.current = null; }
         transition('processing');
         const id = addMessage('user', '…', true);
         placeholderMsgIdRef.current = id;
@@ -145,27 +169,42 @@ export function useRealtimeAPI() {
 
       onAudioDone: () => {},
 
-      /** AI 텍스트 트랜스크립트 스트리밍 중: 부분 텍스트 화면에 표시 */
+      /** AI 텍스트 트랜스크립트 스트리밍 중: 유저 transcript 대기 중이면 버퍼에 보류 */
       onTranscriptDelta: (delta) => {
-        const current = useStore.getState().partialTranscript;
-        setPartialTranscript(current + delta);
+        if (transcriptReceivedRef.current) {
+          // 유저 transcript 이미 도착 → 즉시 표시
+          const current = useStore.getState().partialTranscript;
+          setPartialTranscript(current + delta);
+        } else {
+          // 대기 중 → 버퍼에 누적
+          aiTranscriptBufferRef.current += delta;
+          // 첫 delta에서 5초 폴백 타이머 시작
+          if (!aiTranscriptHoldTimerRef.current) {
+            aiTranscriptHoldTimerRef.current = setTimeout(() => {
+              flushAiTranscript();
+            }, 5000);
+          }
+        }
       },
 
       /**
-       * AI 텍스트 트랜스크립트 완료: 채팅 버블에 메시지 추가.
-       * [수정 전] 여기서 playMechanicalBeep() 호출 → 텍스트 완료 시점 (음성 재생 중일 수 있음)
-       * [수정 후] 기계음 호출 제거 → onPlaybackEnd 콜백으로 이전 (실제 음성 끝난 후 울림)
+       * AI 텍스트 트랜스크립트 완료
        */
       onTranscriptDone: (transcript) => {
-        addMessage('assistant', transcript, true);
-        setPartialTranscript('');
-        // [수정 전] AudioEngine.getInstance().playMechanicalBeep() 호출 위치
-        // → onPlaybackEnd 콜백으로 이전하여 음성 재생 완료 후 울리도록 변경
+        if (transcriptReceivedRef.current) {
+          addMessage('assistant', transcript, true);
+          setPartialTranscript('');
+        } else {
+          // 유저 transcript 아직 미도착 → done도 보류
+          aiTranscriptDoneRef.current = transcript;
+        }
       },
 
       /** 사용자 음성 인식 완료: 플레이스홀더 메시지를 실제 텍스트로 교체 */
       onInputTranscript: (transcript) => {
         transcriptReceivedRef.current = true;
+        // 보류 중인 AI transcript 버퍼 flush
+        flushAiTranscript();
         if (placeholderDelayRef.current) {
           clearTimeout(placeholderDelayRef.current);
           placeholderDelayRef.current = null;
@@ -210,11 +249,13 @@ export function useRealtimeAPI() {
         }
       },
 
-      /** AI 응답 완료: 일정 시간 후 listening 상태로 전환 */
+      /** AI 응답 완료: 오디오 없는 응답(function-call only)만 여기서 listening 전환 */
       onResponseDone: () => {
         setTimeout(() => {
           const currentState = useStore.getState().voiceState;
-          if (currentState === 'speaking') {
+          // aiResponseActiveRef=true면 오디오 재생 중 → onPlaybackEnd에서 처리
+          if (aiResponseActiveRef.current) return;
+          if (currentState === 'speaking' || currentState === 'processing') {
             transition('listening');
           }
         }, TIMINGS.RESPONSE_DONE_TRANSITION_MS);

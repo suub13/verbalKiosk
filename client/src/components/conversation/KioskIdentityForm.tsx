@@ -16,31 +16,28 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 /* ════════════════════════════════════════════════════════════
    타입 & 상수
 ════════════════════════════════════════════════════════════ */
-type FieldId = 'name' | 'rrn-front' | 'rrn-back' | 'phone';
+type FieldId = 'name' | 'birthday' | 'rrn-back' | 'phone';
 type KbMode = 'korean' | 'number';
+
+type AuthPhase = 'form' | 'sending' | 'code' | 'verifying' | 'done';
 
 interface FormData {
   name: string;
-  rrnFront: string;
-  rrnBack: string;
+  birthday: string;   // YYYYMMDD
+  rrnBack: string;    // 주민번호 뒷자리 첫 자리 (1~4)
   phone: string;
   carrier: string;
 }
 
-interface KioskIdentityFormProps {
-  onComplete?: (data: FormData) => void;
-  onCancel?: () => void;
-}
-
-const FIELD_ORDER: FieldId[] = ['name', 'rrn-front', 'rrn-back', 'phone'];
+const FIELD_ORDER: FieldId[] = ['name', 'birthday', 'rrn-back', 'phone'];
 
 const CARRIERS = [
-  { id: 'skt',      label: 'SKT',       color: '#E8102A' },
-  { id: 'kt',       label: 'KT',        color: '#E94E1B' },
-  { id: 'lgu',      label: 'LG U+',     color: '#A50034' },
-  { id: 'mvno-skt', label: '알뜰(SKT)',  color: '#6B7280' },
-  { id: 'mvno-kt',  label: '알뜰(KT)',   color: '#6B7280' },
-  { id: 'mvno-lgu', label: '알뜰(LGU+)', color: '#6B7280' },
+  { id: 'SKT',       label: 'SKT',        color: '#E8102A' },
+  { id: 'KT',        label: 'KT',         color: '#E94E1B' },
+  { id: 'LGU+',      label: 'LG U+',      color: '#A50034' },
+  { id: 'SKTMVNO',  label: '알뜰(SKT)',  color: '#6B7280' },
+  { id: 'KTMVNO',   label: '알뜰(KT)',   color: '#6B7280' },
+  { id: 'LGUMVNO', label: '알뜰(LGU+)', color: '#6B7280' },
 ];
 
 const SHIFT_MAP: Record<string, string> = {
@@ -48,17 +45,16 @@ const SHIFT_MAP: Record<string, string> = {
 };
 
 const MAX_LEN: Record<FieldId, number | null> = {
-  name: null, 'rrn-front': 6, 'rrn-back': 1, phone: 11,
+  name: null, birthday: 8, 'rrn-back': 1, phone: 11,
 };
 
 const PLACEHOLDER: Record<FieldId, string> = {
   name: '이름을 입력해 주세요',
-  'rrn-front': '앞 6자리',
+  birthday: '19901231',
   'rrn-back': '●',
-  phone: '010-0000-0000',
+  phone: '01000000000',
 };
 
-/* 물리 키보드 두벌식 매핑 */
 const KO_MAP: Record<string, string> = {
   q:'ㅂ',w:'ㅈ',e:'ㄷ',r:'ㄱ',t:'ㅅ',y:'ㅛ',u:'ㅕ',i:'ㅑ',o:'ㅐ',p:'ㅔ',
   a:'ㅁ',s:'ㄴ',d:'ㅇ',f:'ㄹ',g:'ㅎ',h:'ㅗ',j:'ㅓ',k:'ㅏ',l:'ㅣ',
@@ -157,33 +153,25 @@ function csReset(v:string): CSState { return {done:v,cho:-1,jung:-1,jong:0}; }
 /* ════════════════════════════════════════════════════════════
    유효성 검사
 ════════════════════════════════════════════════════════════ */
-/** 이름: 한글 또는 영문자 (숫자·특수문자 불가) */
 function validateName(v: string): string | null {
   if (!v.trim()) return '이름을 입력해 주세요.';
   if (/\d/.test(v)) return '이름에 숫자를 입력할 수 없습니다.';
   if (!/^[가-힣a-zA-Z\s]+$/.test(v.trim())) return '이름은 한글 또는 영문만 입력 가능합니다.';
   return null;
 }
-
-/** 주민번호 앞 6자리: 숫자 6개, YYMMDD 형식 */
-function validateRrnFront(v: string): string | null {
-  if (v.length !== 6) return '주민번호 앞 6자리를 입력해 주세요.';
-  if (!/^\d{6}$/.test(v)) return '숫자만 입력 가능합니다.';
-  const month = parseInt(v.slice(2, 4), 10);
-  const day   = parseInt(v.slice(4, 6), 10);
-  if (month < 1 || month > 12) return '올바른 생년월일을 입력해 주세요. (월 오류)';
-  if (day   < 1 || day   > 31) return '올바른 생년월일을 입력해 주세요. (일 오류)';
+function validateBirthday(v: string): string | null {
+  if (v.length !== 8) return '생년월일 8자리를 입력해 주세요. (예: 19901231)';
+  if (!/^\d{8}$/.test(v)) return '숫자만 입력 가능합니다.';
+  const m = parseInt(v.slice(4, 6), 10), d = parseInt(v.slice(6, 8), 10);
+  if (m < 1 || m > 12) return '올바른 월을 입력해 주세요.';
+  if (d < 1 || d > 31) return '올바른 일을 입력해 주세요.';
   return null;
 }
-
-/** 주민번호 뒷자리 첫 번호: 1~4 (성별·출생 연도 구분) */
 function validateRrnBack(v: string): string | null {
   if (!v) return '주민번호 뒷자리를 입력해 주세요.';
-  if (!/^[1-4]$/.test(v)) return '뒷자리는 1~4 사이의 숫자를 입력해 주세요.';
+  if (!/^[1-4]$/.test(v)) return '1~4 사이의 숫자를 입력해 주세요.';
   return null;
 }
-
-/** 전화번호: 10~11 자리 숫자, 010/011/016/017/018/019 시작 */
 function validatePhone(v: string): string | null {
   if (!v) return '휴대폰 번호를 입력해 주세요.';
   if (!/^\d+$/.test(v)) return '숫자만 입력 가능합니다.';
@@ -193,477 +181,491 @@ function validatePhone(v: string): string | null {
 }
 
 /* ════════════════════════════════════════════════════════════
-   유틸리티
+  유틸리티
 ════════════════════════════════════════════════════════════ */
-function fmtPhone(p:string){ if(!p)return ''; if(p.length<=3)return p; if(p.length<=7)return p.slice(0,3)+'-'+p.slice(3); return p.slice(0,3)+'-'+p.slice(3,7)+'-'+p.slice(7); }
-
-function getFieldVal(form:FormData, f:FieldId): string {
-  switch(f){ case 'name': return form.name; case 'rrn-front': return form.rrnFront; case 'rrn-back': return form.rrnBack; case 'phone': return form.phone; }
+function fmtPhone(p: string) {
+  if (!p) return '';
+  if (p.length <= 3) return p;
+  if (p.length <= 7) return p.slice(0, 3) + '-' + p.slice(3);
+  return p.slice(0, 3) + '-' + p.slice(3, 7) + '-' + p.slice(7);
 }
-
-function setFieldVal(form:FormData, f:FieldId, v:string): FormData {
-  const n = {...form};
-  switch(f){
-    case 'name':      n.name=v; break;
-    case 'rrn-front': n.rrnFront=v.replace(/\D/g,'').slice(0,6); break;
-    case 'rrn-back':  n.rrnBack=v.replace(/\D/g,'').slice(0,1); break;
-    case 'phone':     n.phone=v.replace(/\D/g,'').slice(0,11); break;
+function fmtBirthday(v: string) {
+  if (v.length <= 4) return v;
+  if (v.length <= 6) return v.slice(0, 4) + '.' + v.slice(4);
+  return v.slice(0, 4) + '.' + v.slice(4, 6) + '.' + v.slice(6);
+}
+function getFieldVal(form: FormData, f: FieldId): string {
+  switch (f) { case 'name': return form.name; case 'birthday': return form.birthday; case 'rrn-back': return form.rrnBack; case 'phone': return form.phone; }
+}
+function setFieldVal(form: FormData, f: FieldId, v: string): FormData {
+  const n = { ...form };
+  switch (f) {
+    case 'name':      n.name = v; break;
+    case 'birthday':  n.birthday = v.replace(/\D/g, '').slice(0, 8); break;
+    case 'rrn-back':  n.rrnBack = v.replace(/\D/g, '').slice(0, 1); break;
+    case 'phone':     n.phone = v.replace(/\D/g, '').slice(0, 11); break;
   }
   return n;
 }
+function displayVal(form: FormData, f: FieldId, cs: CSState, cf: FieldId | null, kb: KbMode): string {
+  let val = (f === cf && kb === 'korean') ? csVal(cs) : getFieldVal(form, f);
+  if (f !== 'name') val = val.replace(/\D/g, '');
+  if (f === 'phone') return fmtPhone(val);
+  if (f === 'birthday') return fmtBirthday(val);
+  return val;
+}
 
-function displayVal(form:FormData, f:FieldId, cs:CSState, currentField:FieldId|null, kbMode:KbMode): string {
-  let val = (f === currentField && kbMode === 'korean') ? csVal(cs) : getFieldVal(form, f);
-  if(f !== 'name') val = val.replace(/\D/g,'');
-  return f === 'phone' ? fmtPhone(val) : val;
+/* ── 비활성화 시 마스킹 ── */
+function maskName(v: string): string {
+  const t = v.trim();
+  if (!t) return '';
+  if (t.length === 1) return t;
+  if (t.length === 2) return t[0] + '*';
+  // 3글자 이상: 가운데 글자들을 * 처리
+  const mid = t.slice(1, t.length - 1).replace(/./g, '*');
+  return t[0] + mid + t[t.length - 1];
+}
+function maskBirthday(v: string): string {
+  // v is already formatted like 1990.01.23 → 1990****
+  const digits = v.replace(/\D/g, '');
+  if (digits.length < 4) return v;
+  return digits.slice(0, 4) + '****';
+}
+function maskPhone(v: string): string {
+  // v is already formatted like 010-1234-5678 → 010-****-5678
+  const digits = v.replace(/\D/g, '');
+  if (digits.length < 8) return v;
+  const part1 = digits.slice(0, 3);
+  const part3 = digits.slice(digits.length === 10 ? 6 : 7);
+  return `${part1}-****-${part3}`;
+}
+function maskedDisplayVal(f: FieldId, displayed: string): string {
+  if (!displayed) return displayed;
+  switch (f) {
+    case 'name':     return maskName(displayed);
+    case 'birthday': return maskBirthday(displayed);
+    case 'phone':    return maskPhone(displayed);
+    default:         return displayed;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════
    메인 컴포넌트
 ════════════════════════════════════════════════════════════ */
-export const KioskIdentityForm: React.FC<KioskIdentityFormProps> = ({ onComplete, onCancel }) => {
-  const [form, setForm] = useState<FormData>({ name:'', rrnFront:'', rrnBack:'', phone:'', carrier:'' });
+export const KioskIdentityForm: React.FC = () => {
+  const [form, setForm] = useState<FormData>({ name: '', birthday: '', rrnBack: '', phone: '', carrier: '' });
   const [cs, setCs] = useState<CSState>(csReset(''));
   const [currentField, setCurrentField] = useState<FieldId | null>(null);
   const [kbMode, setKbMode] = useState<KbMode>('korean');
   const [isShifted, setIsShifted] = useState(false);
   const [kbVisible, setKbVisible] = useState(false);
   const [waitingCarrier, setWaitingCarrier] = useState(false);
-  const [errors, setErrors] = useState<Record<string,string>>({});
-  const [showSuccess, setShowSuccess] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [phase, setPhase] = useState<AuthPhase>('form');
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [userToken, setUserToken] = useState<string | null>(null);
+  const [authCode, setAuthCode] = useState('');
+  const [authCodeError, setAuthCodeError] = useState<string | null>(null);
 
-  const scrollRef  = useRef<HTMLDivElement>(null);
-  const fieldRefs  = useRef<Record<string, HTMLDivElement|null>>({});
-  const sliderRef  = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const fieldRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const sliderRef = useRef<HTMLDivElement>(null);
+  const authCodeRef = useRef<HTMLInputElement>(null);
 
-  /* ────────────────────────────────────────────────────────
-     스크롤: 키보드 위로 해당 입력창이 보이도록
-     phone 필드는 특별히 더 위쪽으로 올려서 전체 필드가 보이게
-  ──────────────────────────────────────────────────────── */
   const scrollToField = useCallback((fieldId: string, extraMargin = 0) => {
     setTimeout(() => {
-      const el     = fieldRefs.current[fieldId];
+      const el = fieldRefs.current[fieldId];
       const scroll = scrollRef.current;
       const slider = sliderRef.current;
       if (!el || !scroll) return;
-
-      const kbH   = slider?.offsetHeight || 280;
+      const kbH = slider?.offsetHeight || 280;
       const sRect = scroll.getBoundingClientRect();
       const fRect = el.getBoundingClientRect();
-
-      /* 키보드 위 가시 영역 */
-      const vTop = sRect.top + 16;
-      const vBot = sRect.bottom - kbH - 16 - extraMargin;
-      const mid  = (vTop + vBot) / 2;
-
-      if (fRect.top < vTop || fRect.bottom > vBot) {
-        const delta = ((fRect.top + fRect.bottom) / 2) - mid;
-        scroll.scrollBy({ top: delta, behavior: 'smooth' });
-      }
+      const vTop = sRect.top + 16, vBot = sRect.bottom - kbH - 16 - extraMargin;
+      const mid = (vTop + vBot) / 2;
+      if (fRect.top < vTop || fRect.bottom > vBot)
+        scroll.scrollBy({ top: ((fRect.top + fRect.bottom) / 2) - mid, behavior: 'smooth' });
     }, 100);
   }, []);
 
-  /* ── 필드 포커스 ── */
   const focusField = useCallback((fieldId: FieldId) => {
-    setForm(prev => {
-      if (currentField && kbMode === 'korean') return setFieldVal(prev, currentField, csVal(cs));
-      return prev;
-    });
-
+    setForm(prev => (currentField && kbMode === 'korean') ? setFieldVal(prev, currentField, csVal(cs)) : prev);
     const mode: KbMode = fieldId === 'name' ? 'korean' : 'number';
-    setCurrentField(fieldId);
-    setKbMode(mode);
-    setIsShifted(false);
-    setWaitingCarrier(false);
-    setKbVisible(true);
-    setErrors(prev => { const n={...prev}; delete n[fieldId]; return n; });
+    setCurrentField(fieldId); setKbMode(mode); setIsShifted(false);
+    setWaitingCarrier(false); setKbVisible(true);
+    setErrors(prev => { const n = { ...prev }; delete n[fieldId]; return n; });
     setCs(csReset(getFieldVal(form, fieldId)));
-
-    /* phone 필드는 키패드가 상당히 높으므로 여분 마진 추가 */
     scrollToField(fieldId, fieldId === 'phone' ? 80 : 0);
   }, [currentField, kbMode, cs, form, scrollToField]);
 
-  /* ── 키보드 닫기 ── */
   const closeKeyboard = useCallback(() => {
     if (currentField && kbMode === 'korean') {
-      const v = csVal(cs);
-      setForm(prev => setFieldVal(prev, currentField, v));
-      setCs(csReset(v));
+      const v = csVal(cs); setForm(prev => setFieldVal(prev, currentField, v)); setCs(csReset(v));
     }
-    setKbVisible(false);
-    setCurrentField(null);
+    setKbVisible(false); setCurrentField(null);
   }, [currentField, kbMode, cs]);
 
-  /* ── 한글 문자 키 ── */
   const handleCharKey = useCallback((k: string) => {
     if (!currentField) return;
     const ml = MAX_LEN[currentField];
     if (ml && csVal(cs).length >= ml) return;
-
     const inputK = isShifted && SHIFT_MAP[k] ? SHIFT_MAP[k] : k;
-    let newCs: CSState;
-    if (JUNG_IDX[inputK] !== undefined) newCs = csVowel(cs, inputK);
-    else newCs = csConsonant(cs, inputK);
-
-    setCs(newCs);
-    setForm(prev => setFieldVal(prev, currentField, csVal(newCs)));
+    const newCs = JUNG_IDX[inputK] !== undefined ? csVowel(cs, inputK) : csConsonant(cs, inputK);
+    setCs(newCs); setForm(prev => setFieldVal(prev, currentField, csVal(newCs)));
     if (isShifted && SHIFT_MAP[k]) setIsShifted(false);
   }, [currentField, cs, isShifted]);
 
-  /* ── 숫자 키 — 자동 이동 로직 포함 ── */
   const handleNumKey = useCallback((k: string) => {
     if (!currentField) return;
-    const ml  = MAX_LEN[currentField];
+    const ml = MAX_LEN[currentField];
     const cur = getFieldVal(form, currentField);
     if (ml && cur.length >= ml) return;
-
     const newVal = cur + k;
     setForm(prev => setFieldVal(prev, currentField, newVal));
-    setCs(csReset(newVal.replace(/\D/g,'').slice(0, ml || 999)));
+    setCs(csReset(newVal.replace(/\D/g, '').slice(0, ml || 999)));
+    if (currentField === 'birthday' && newVal.length >= 8) setTimeout(() => focusField('rrn-back'), 80);
+    if (currentField === 'rrn-back') setTimeout(() => { setKbVisible(false); setCurrentField(null); setWaitingCarrier(true); setTimeout(() => scrollToField('fg-carrier'), 100); }, 80);
+  }, [currentField, form, focusField, scrollToField]);
 
-    /* 주민번호 앞 6자리 완성 → 뒷번호 칸으로 자동 이동 */
-    if (currentField === 'rrn-front' && newVal.length >= 6) {
-      setTimeout(() => focusField('rrn-back'), 80);
-    }
-  }, [currentField, form, focusField]);
-
-  /* ── 백스페이스 ── */
   const handleBackspace = useCallback(() => {
     if (!currentField) return;
     if (kbMode === 'korean') {
-      const newCs = csBs(cs);
-      setCs(newCs);
-      setForm(prev => setFieldVal(prev, currentField, csVal(newCs)));
+      const newCs = csBs(cs); setCs(newCs); setForm(prev => setFieldVal(prev, currentField, csVal(newCs)));
     } else {
       const cur = getFieldVal(form, currentField);
       if (!cur) return;
-      const newVal = cur.slice(0, -1);
-      setForm(prev => setFieldVal(prev, currentField, newVal));
-      setCs(csReset(newVal));
+      const nv = cur.slice(0, -1); setForm(prev => setFieldVal(prev, currentField, nv)); setCs(csReset(nv));
     }
   }, [currentField, kbMode, cs, form]);
 
-  /* ── 정정(전체삭제) ── */
   const handleClear = useCallback(() => {
     if (!currentField) return;
-    setForm(prev => setFieldVal(prev, currentField, ''));
-    setCs(csReset(''));
+    setForm(prev => setFieldVal(prev, currentField, '')); setCs(csReset(''));
   }, [currentField]);
 
-  /* ── 완료 → 다음 필드 ── */
   const handleConfirm = useCallback(() => {
     if (!currentField) return;
-    if (kbMode === 'korean') {
-      const v = csVal(cs);
-      setForm(prev => setFieldVal(prev, currentField, v));
-      setCs(csReset(v));
-    }
-
-    if (currentField === 'rrn-back') {
-      setKbVisible(false);
-      setCurrentField(null);
-      setWaitingCarrier(true);
-      setTimeout(() => scrollToField('fg-carrier'), 100);
-      return;
-    }
-
+    if (kbMode === 'korean') { const v = csVal(cs); setForm(prev => setFieldVal(prev, currentField, v)); setCs(csReset(v)); }
     const idx = FIELD_ORDER.indexOf(currentField);
     if (idx >= 0 && idx < FIELD_ORDER.length - 1) {
       const next = FIELD_ORDER[idx + 1];
       if (next === 'phone' && !form.carrier) {
-        setKbVisible(false);
-        setCurrentField(null);
-        setWaitingCarrier(true);
-        setTimeout(() => scrollToField('fg-carrier'), 100);
-        return;
+        setKbVisible(false); setCurrentField(null); setWaitingCarrier(true);
+        setTimeout(() => scrollToField('fg-carrier'), 100); return;
       }
       setTimeout(() => focusField(next), 50);
-    } else {
-      closeKeyboard();
-    }
+    } else { closeKeyboard(); }
   }, [currentField, kbMode, cs, form.carrier, focusField, closeKeyboard, scrollToField]);
 
-  /* ── 통신사 선택 ── */
   const handleCarrierSelect = useCallback((id: string) => {
     if (currentField) {
-      if (kbMode === 'korean') {
-        const v = csVal(cs);
-        setForm(prev => ({ ...setFieldVal(prev, currentField!, v), carrier: id }));
-        setCs(csReset(v));
-      } else {
-        setForm(prev => ({ ...prev, carrier: id }));
-      }
-      setKbVisible(false);
-      setCurrentField(null);
-    } else {
-      setForm(prev => ({ ...prev, carrier: id }));
-    }
+      if (kbMode === 'korean') { const v = csVal(cs); setForm(prev => ({ ...setFieldVal(prev, currentField!, v), carrier: id })); setCs(csReset(v)); }
+      else setForm(prev => ({ ...prev, carrier: id }));
+      setKbVisible(false); setCurrentField(null);
+    } else { setForm(prev => ({ ...prev, carrier: id })); }
     setWaitingCarrier(false);
-    setErrors(prev => { const n={...prev}; delete n['carrier']; return n; });
+    setErrors(prev => { const n = { ...prev }; delete n['carrier']; return n; });
     setTimeout(() => focusField('phone'), 150);
   }, [currentField, kbMode, cs, focusField]);
 
-  /* ── 제출 + 유효성 검사 ── */
-  const handleSubmit = useCallback(() => {
-    closeKeyboard();
-    const errs: Record<string,string> = {};
+  /* ── 인증번호 확인 ── */
+  const handleVerifyCode = useCallback(async () => {
+    if (!authCode || authCode.length < 6) { setAuthCodeError('6자리 인증번호를 입력해 주세요.'); return; }
+    if (!userToken) return;
+    setPhase('verifying'); setAuthCodeError(null);
+    try {
+      const res = await fetch('/api/pino/identity/result', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userToken, authNumber: authCode }),
+      });
+      const data = await res.json();
+      const errMsg = data.detail?.error ?? data.error;
+      if (!res.ok || !data.success) throw new Error(errMsg || '인증번호가 올바르지 않습니다.');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { useStore } = await import('@/store');
+      const store = useStore.getState() as any;
+      store.setPhoneNumber?.(form.phone);
+      store.setPhoneVerified?.(true);
+      // Store pino tokens in serviceData for later use in apply_sign/doc_apply
+      store.patchServiceData?.({
+        pinoAccessToken: data.data.accessToken,
+        pinoRefreshToken: data.data.refreshToken,
+        pinoCarrier: form.carrier,
+        pinoPhone: form.phone,
+      });
+      const { pipelineBridge } = await import('@/services/pipelineBridge');
+      pipelineBridge.sendOptionsConfirmed?.(JSON.stringify({ identity_verified: true, phone: form.phone, carrier: form.carrier, accessToken: data.data.accessToken, refreshToken: data.data.refreshToken }));
+      setPhase('done');
+    } catch (err: unknown) {
+      setAuthCodeError(err instanceof Error ? err.message : '인증번호가 올바르지 않습니다.');
+      setPhase('code');
+    }
+  }, [authCode, userToken, form]);
 
-    const nameErr = validateName(form.name);
-    if (nameErr) errs['name'] = nameErr;
-
-    const rrnFrontErr = validateRrnFront(form.rrnFront);
-    if (rrnFrontErr) errs['rrn-front'] = rrnFrontErr;
-
-    const rrnBackErr = validateRrnBack(form.rrnBack);
-    if (rrnBackErr) errs['rrn-back'] = rrnBackErr;
-
-    if (!form.carrier) errs['carrier'] = '통신사를 선택해 주세요.';
-
-    const phoneErr = validatePhone(form.phone);
-    if (phoneErr) errs['phone'] = phoneErr;
-
-    setErrors(errs);
-    if (Object.keys(errs).length > 0) return;
-
-    if (onComplete) { onComplete(form); return; }
-    setShowSuccess(true);
-  }, [form, closeKeyboard, onComplete]);
-
-  /* ── 초기화 ── */
-  const handleReset = useCallback(() => {
-    closeKeyboard();
-    setWaitingCarrier(false);
-    setForm({ name:'', rrnFront:'', rrnBack:'', phone:'', carrier:'' });
-    setCs(csReset(''));
-    setErrors({});
-  }, [closeKeyboard]);
-
-  /* ── 물리 키보드 ── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (waitingCarrier || !currentField) return;
-      if (e.key === 'Backspace')            { e.preventDefault(); handleBackspace(); return; }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); handleConfirm(); return; }
-      if (e.key === 'Escape')               { e.preventDefault(); closeKeyboard(); return; }
-      if (kbMode === 'number') {
-        if (/^[0-9]$/.test(e.key)) { e.preventDefault(); handleNumKey(e.key); }
+      /* ── 인증번호 입력 단계: 키보드 입력 지원 ── */
+      if (phase === 'code') {
+        if (e.key === 'Backspace') {
+          e.preventDefault();
+          setAuthCode(prev => prev.slice(0, -1));
+          setAuthCodeError(null);
+          return;
+        }
+        if (e.key === 'Enter') { e.preventDefault(); handleVerifyCode(); return; }
+        if (/^[0-9]$/.test(e.key) && authCode.length < 6) {
+          e.preventDefault();
+          setAuthCode(prev => prev + e.key);
+          setAuthCodeError(null);
+          return;
+        }
         return;
       }
+
+      if (phase !== 'form' || waitingCarrier || !currentField) return;
+      if (e.key === 'Backspace') { e.preventDefault(); handleBackspace(); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); handleConfirm(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); closeKeyboard(); return; }
+      if (kbMode === 'number') { if (/^[0-9]$/.test(e.key)) { e.preventDefault(); handleNumKey(e.key); } return; }
       if (kbMode === 'korean') {
         const mapped = KO_MAP[e.key];
         if (mapped) { e.preventDefault(); handleCharKey(mapped); return; }
-        if (e.key === ' ') {
-          e.preventDefault();
-          const v = csVal(cs);
-          const newCs: CSState = { done: v + ' ', cho: -1, jung: -1, jong: 0 };
-          setCs(newCs);
-          setForm(prev => setFieldVal(prev, currentField!, csVal(newCs)));
-        }
+        if (e.key === ' ') { e.preventDefault(); const v = csVal(cs); const ncs: CSState = { done: v + ' ', cho: -1, jung: -1, jong: 0 }; setCs(ncs); setForm(prev => setFieldVal(prev, currentField!, csVal(ncs))); }
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [currentField, kbMode, waitingCarrier, cs, handleBackspace, handleConfirm, handleNumKey, handleCharKey, closeKeyboard]);
+  }, [phase, authCode, currentField, kbMode, waitingCarrier, cs, handleBackspace, handleConfirm, handleNumKey, handleCharKey, handleVerifyCode, closeKeyboard]);
 
-  /* ── 빈 영역 클릭 → 키보드 닫기 ── */
   const handleScrollAreaClick = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (!target.closest('[data-field]') && !target.closest('[data-carrier]') && !target.closest('[data-action]')) {
-      closeKeyboard();
-    }
+    const t = e.target as HTMLElement;
+    if (!t.closest('[data-field]') && !t.closest('[data-carrier]') && !t.closest('[data-action]')) closeKeyboard();
   }, [closeKeyboard]);
 
-  /* ════════════════════════════════════
-     렌더링 헬퍼
-  ════════════════════════════════════ */
-  const disp      = (f: FieldId) => displayVal(form, f, cs, currentField, kbMode);
+  /* ── SMS 발송 ── */
+  const handleSendSms = useCallback(async () => {
+    closeKeyboard();
+    const errs: Record<string, string> = {};
+    const ne = validateName(form.name);       if (ne) errs['name'] = ne;
+    const be = validateBirthday(form.birthday); if (be) errs['birthday'] = be;
+    const re = validateRrnBack(form.rrnBack); if (re) errs['rrn-back'] = re;
+    if (!form.carrier) errs['carrier'] = '통신사를 선택해 주세요.';
+    const pe = validatePhone(form.phone);     if (pe) errs['phone'] = pe;
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setPhase('sending'); setApiError(null);
+    try {
+      const res = await fetch('/api/pino/identity/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerId: form.carrier, userName: form.name, userBirthday: form.birthday, userPhone: form.phone, userRegistSingleNumber: form.rrnBack }),
+      });
+      const data = await res.json();
+      // 502는 detail.error, 200 success:false는 data.error
+      const errMsg = data.detail?.error ?? data.error;
+      if (!res.ok || !data.success) throw new Error(errMsg || '본인확인 요청 실패');
+      setUserToken(data.data.userToken);
+      setPhase('code');
+      setTimeout(() => authCodeRef.current?.focus(), 200);
+    } catch (err: unknown) {
+      setApiError(err instanceof Error ? err.message : '서버 연결에 실패했습니다.');
+      setPhase('form');
+    }
+  }, [form, closeKeyboard]);
+
+  const disp = (f: FieldId) => displayVal(form, f, cs, currentField, kbMode);
   const isFocused = (f: FieldId) => currentField === f;
-
-  /* ── 입력 박스 스타일 조합 ── */
   const inputStyle = (f: FieldId, extra?: React.CSSProperties): React.CSSProperties => ({
-    ...S.inputBox,
-    ...(isFocused(f) ? S.inputBoxFocused : {}),
-    ...(errors[f]    ? S.inputBoxError   : {}),
-    ...extra,
+    ...S.inputBox, ...(isFocused(f) ? S.inputBoxFocused : {}), ...(errors[f] ? S.inputBoxError : {}), ...extra,
   });
-
-  /* ── 입력 박스 내부 컨텐츠 ── */
   const inputContent = (f: FieldId) => {
     const val = disp(f);
-    return val
-      ? <><span style={S.inputText}>{val}</span>{isFocused(f) && <span style={S.cursor}/>}</>
-      : <><span style={S.inputPlaceholder}>{PLACEHOLDER[f]}</span>{isFocused(f) && <span style={S.cursor}/>}</>;
+    const focused = isFocused(f);
+    // 비활성화 상태 + 값 있음 → 마스킹 적용 (rrn-back은 이미 ●로 표시)
+    const displayText = (!focused && val && f !== 'rrn-back') ? maskedDisplayVal(f, val) : val;
+    return displayText
+      ? <><span style={S.inputText}>{displayText}</span>{focused && <span style={S.cursor} />}</>
+      : <><span style={S.inputPlaceholder}>{PLACEHOLDER[f]}</span>{focused && <span style={S.cursor} />}</>;
   };
 
+  /* ── 완료 화면 ── */
+  if (phase === 'done') {
+    return (
+      <div style={{ ...S.wrapper, alignItems: 'center', justifyContent: 'center' }}>
+        <style>{CSS_KEYFRAMES}</style>
+        <div style={{ textAlign: 'center' as const }}>
+          <div style={{ fontSize: 64, marginBottom: 12 }}>✅</div>
+          <h2 style={{ fontSize: 26, fontWeight: 700, color: '#16a34a', margin: '0 0 8px' }}>본인인증 완료</h2>
+          <p style={{ fontSize: 16, color: '#6B7280' }}>다음 단계를 진행해 주세요.</p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── 인증번호 입력 화면 (NumericKB 슬라이더 방식) ── */
+  if (phase === 'code' || phase === 'verifying') {
+    const handleAuthNum = (k: string) => {
+      if (authCode.length < 6) {
+        setAuthCode(prev => prev + k);
+        setAuthCodeError(null);
+      }
+    };
+    const handleAuthBackspace = () => {
+      setAuthCode(prev => prev.slice(0, -1));
+      setAuthCodeError(null);
+    };
+    // 6칸 박스 표시
+    const boxes = Array.from({ length: 6 }, (_, i) => authCode[i] ?? null);
+    return (
+      <div style={{ ...S.wrapper, display: 'flex', flexDirection: 'column' as const }}
+        onMouseDown={e => e.preventDefault()}>
+        <style>{CSS_KEYFRAMES}</style>
+
+        {/* 아이콘 + 제목 + 박스 */}
+        <div style={{ display: 'flex', flexDirection: 'column' as const, alignItems: 'center', padding: '32px 20px 16px', flexShrink: 0 }}>
+          <div style={{ fontSize: 36, marginBottom: 6 }}>📱</div>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1a1f36', marginBottom: 4 }}>인증번호 입력</h2>
+          <p style={{ fontSize: 13, color: '#6B7280', marginBottom: 16, textAlign: 'center' as const, lineHeight: 1.6 }}>
+            <strong>{fmtPhone(form.phone)}</strong>으로 발송된<br />6자리 인증번호를 입력해 주세요.
+          </p>
+
+          {/* 6칸 인증번호 박스 */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+            {boxes.map((ch, i) => (
+              <div key={i} style={{
+                width: 44, height: 54, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 24, fontWeight: 800, color: '#1a1f36',
+                border: `2px solid ${authCodeError ? '#EF4444' : (i === authCode.length ? '#3B82F6' : (ch ? '#3B82F6' : '#D1D5DB'))}`,
+                background: ch ? '#EFF6FF' : '#F9FAFB',
+                boxShadow: i === authCode.length ? '0 0 0 3px rgba(59,130,246,0.18)' : 'none',
+                transition: 'all 0.15s',
+              }}>
+                {ch ?? (i === authCode.length ? <span style={{ display:'block', width:2, height:24, background:'#3B82F6', borderRadius:2, animation:'blink 1s step-end infinite' }} /> : '')}
+              </div>
+            ))}
+          </div>
+          {authCodeError && <div style={{ fontSize: 12, color: '#EF4444', marginTop: 4, textAlign: 'center' as const }}>{authCodeError}</div>}
+          <p style={{ fontSize: 11, color: '#9CA3AF', marginTop: 6, textAlign: 'center' as const }}>
+            키보드로도 입력할 수 있습니다
+          </p>
+        </div>
+
+        {/* 인라인 숫자 키패드 — 배경 없이 인증번호 칸 바로 아래 */}
+        <div
+          onMouseDown={e => { e.preventDefault(); e.stopPropagation(); }}
+          style={{ flexShrink: 0, display: 'flex', justifyContent: 'center', padding: '8px 0 4px' }}
+        >
+          <div style={{ display: 'inline-flex', flexDirection: 'column' as const, gap: 10 }}>
+            {[['1','2','3'],['4','5','6'],['7','8','9']].map((row, ri) => (
+              <div key={ri} style={{ display: 'flex', gap: 10 }}>
+                {row.map(k => (
+                  <button key={k} onMouseDown={e => { e.preventDefault(); handleAuthNum(k); }} style={S.inlineNumKey}>{k}</button>
+                ))}
+              </div>
+            ))}
+            {/* 0 + 지우기 한 줄 */}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ ...S.inlineNumKey, visibility: 'hidden' } as React.CSSProperties} />
+              <button onMouseDown={e => { e.preventDefault(); handleAuthNum('0'); }} style={S.inlineNumKey}>0</button>
+              <button onMouseDown={e => { e.preventDefault(); handleAuthBackspace(); }} style={{ ...S.inlineNumKey, background: '#fef2f2', border: '1.5px solid #fca5a5', color: '#ef4444', fontSize: 18 }}>
+                ⌫
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 하단 버튼 */}
+        <div style={{ flex: 1 }} />
+        <div style={{ ...S.bottomBtns, flexShrink: 0 }}>
+          <button style={S.btnCancel} onMouseDown={e => { e.preventDefault(); setPhase('form'); setAuthCode(''); setAuthCodeError(null); }}>다시 입력</button>
+          <button
+            style={{ ...S.btnSubmit, opacity: (phase === 'verifying' || authCode.length < 6) ? 0.6 : 1 }}
+            onMouseDown={e => { e.preventDefault(); if (phase !== 'verifying') handleVerifyCode(); }}
+            disabled={phase === 'verifying' || authCode.length < 6}
+          >
+            {phase === 'verifying' ? '확인 중...' : '인증 확인'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── 정보 입력 화면 ── */
   return (
     <div style={S.wrapper}>
       <style>{CSS_KEYFRAMES}</style>
-
-      {/* ══════════════════════════════════════
-          스크롤 영역 (하단 버튼 제외)
-      ══════════════════════════════════════ */}
       <div ref={scrollRef} style={S.scrollArea} onMouseDown={handleScrollAreaClick}>
-
-        {/* 타이틀 */}
         <div style={S.titleSection}>
           <div style={{ fontSize: 40, marginBottom: 6 }}>🔐</div>
           <h2 style={S.title}>본인인증</h2>
           <p style={S.subtitle}>서류 발급을 위해 본인 확인이 필요합니다.</p>
         </div>
-
-        {/* ── 폼 카드 (너비 제한) ── */}
+        {apiError && (
+          <div style={{ maxWidth: 640, margin: '0 auto 12px', padding: '12px 16px', borderRadius: 10,
+            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: '#DC2626', fontSize: 14, textAlign: 'center' as const }}>
+            ⚠️ {apiError}
+          </div>
+        )}
         <div style={S.formCard}>
-
-          {/* ① 이름 */}
+          {/* 이름 */}
           <div style={S.fieldGroup} ref={el => { fieldRefs.current['name'] = el; }}>
             <div style={S.fieldLabel}>이름 <span style={S.req}>*</span></div>
-            <div
-              data-field="name"
-              style={inputStyle('name')}
-              onMouseDown={e => { e.preventDefault(); focusField('name'); }}
-            >
-              {inputContent('name')}
-            </div>
+            <div data-field="name" style={inputStyle('name')} onMouseDown={e => { e.preventDefault(); focusField('name'); }}>{inputContent('name')}</div>
             {errors['name'] && <div style={S.errorMsg}>{errors['name']}</div>}
           </div>
-
-          {/* ② 주민번호 */}
-          <div style={S.fieldGroup}>
-            <div style={S.fieldLabel}>주민등록번호 <span style={S.req}>*</span></div>
-            <div style={S.rrnRow}>
-              {/* 앞 6자리 */}
-              <div
-                data-field="rrn-front"
-                ref={el => { fieldRefs.current['rrn-front'] = el; }}
-                style={inputStyle('rrn-front', { flex: 1 })}
-                onMouseDown={e => { e.preventDefault(); focusField('rrn-front'); }}
-              >
-                {inputContent('rrn-front')}
-              </div>
-              <span style={S.rrnDivider}>-</span>
-              {/* 뒷 첫자리 */}
-              <div
-                data-field="rrn-back"
-                ref={el => { fieldRefs.current['rrn-back'] = el; }}
-                style={inputStyle('rrn-back', { flex: '0 0 64px' })}
-                onMouseDown={e => { e.preventDefault(); focusField('rrn-back'); }}
-              >
-                {inputContent('rrn-back')}
-              </div>
-              <span style={S.rrnMask}>●●●●●●</span>
-            </div>
-            {(errors['rrn-front'] || errors['rrn-back']) && (
-              <div style={S.errorMsg}>{errors['rrn-front'] || errors['rrn-back']}</div>
-            )}
+          {/* 생년월일 */}
+          <div style={S.fieldGroup} ref={el => { fieldRefs.current['birthday'] = el; }}>
+            <div style={S.fieldLabel}>생년월일 <span style={S.req}>*</span> <span style={S.hint}>(8자리, 예: 19901231)</span></div>
+            <div data-field="birthday" style={inputStyle('birthday')} onMouseDown={e => { e.preventDefault(); focusField('birthday'); }}>{inputContent('birthday')}</div>
+            {errors['birthday'] && <div style={S.errorMsg}>{errors['birthday']}</div>}
           </div>
-
-          {/* ③ 통신사 */}
+          {/* 주민번호 뒷자리 */}
+          <div style={S.fieldGroup} ref={el => { fieldRefs.current['rrn-back'] = el; }}>
+            <div style={S.fieldLabel}>주민번호 뒷자리 첫 번째 숫자 <span style={S.req}>*</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: '0.9rem', color: '#9CA3AF' }}>YYMMDD&nbsp;-&nbsp;</span>
+              <div data-field="rrn-back" style={inputStyle('rrn-back', { flex: '0 0 64px' })} onMouseDown={e => { e.preventDefault(); focusField('rrn-back'); }}>{inputContent('rrn-back')}</div>
+              <span style={{ fontSize: '0.78rem', color: '#9CA3AF', letterSpacing: '0.14em' }}>●●●●●●</span>
+            </div>
+            {errors['rrn-back'] && <div style={S.errorMsg}>{errors['rrn-back']}</div>}
+          </div>
+          {/* 통신사 */}
           <div style={S.fieldGroup} ref={el => { fieldRefs.current['fg-carrier'] = el; }}>
             <div style={S.fieldLabel}>통신사 <span style={S.req}>*</span></div>
             <div style={S.carrierGrid}>
               {CARRIERS.map(c => (
-                <button
-                  key={c.id}
-                  data-carrier={c.id}
-                  style={{
-                    ...S.carrierBtn,
-                    ...(form.carrier === c.id
-                      ? { background: `${c.color}15`, borderColor: c.color, color: c.color, fontWeight: 700 }
-                      : {}),
-                  }}
-                  onMouseDown={e => { e.preventDefault(); handleCarrierSelect(c.id); }}
-                >
+                <button key={c.id} data-carrier={c.id}
+                  style={{ ...S.carrierBtn, ...(form.carrier === c.id ? { background: `${c.color}15`, borderColor: c.color, color: c.color, fontWeight: 700 } : {}) }}
+                  onMouseDown={e => { e.preventDefault(); handleCarrierSelect(c.id); }}>
                   {c.label}
                 </button>
               ))}
             </div>
-            {waitingCarrier && !form.carrier && (
-              <div style={S.carrierHint}>👆 통신사를 선택해 주세요</div>
-            )}
+            {waitingCarrier && !form.carrier && <div style={S.carrierHint}>👆 통신사를 선택해 주세요</div>}
             {errors['carrier'] && <div style={S.errorMsg}>{errors['carrier']}</div>}
           </div>
-
-          {/* ④ 휴대폰 (ref = 폰 필드 그룹 전체) */}
+          {/* 휴대폰 */}
           <div style={S.fieldGroup} ref={el => { fieldRefs.current['phone'] = el; }}>
             <div style={S.fieldLabel}>휴대폰 번호 <span style={S.req}>*</span></div>
-            <div
-              data-field="phone"
-              style={inputStyle('phone')}
-              onMouseDown={e => { e.preventDefault(); focusField('phone'); }}
-            >
-              {inputContent('phone')}
-            </div>
+            <div data-field="phone" style={inputStyle('phone')} onMouseDown={e => { e.preventDefault(); focusField('phone'); }}>{inputContent('phone')}</div>
             {errors['phone'] && <div style={S.errorMsg}>{errors['phone']}</div>}
           </div>
         </div>
-
-        {/* 키보드 올라올 때 여백 (phone 입력 중엔 더 크게) */}
-        {kbVisible && (
-          <div style={{ height: currentField === 'phone' ? 360 : 280 }} />
-        )}
+        {kbVisible && <div style={{ height: currentField === 'phone' ? 360 : 280 }} />}
       </div>
-
-      {/* ══════════════════════════════════════
-          하단 버튼 — 스크롤 영역 밖(고정)
-      ══════════════════════════════════════ */}
       <div style={S.bottomBtns} data-action="buttons">
-        <button
-          style={S.btnCancel}
-          onMouseDown={e => { e.preventDefault(); onCancel ? onCancel() : handleReset(); }}
-        >
-          {onCancel ? '취소' : '초기화'}
-        </button>
-        <button
-          style={S.btnSubmit}
-          onMouseDown={e => { e.preventDefault(); handleSubmit(); }}
-        >
-          본인인증 완료
+        <button style={{ ...S.btnSubmit, opacity: phase === 'sending' ? 0.7 : 1 }}
+          onMouseDown={e => { e.preventDefault(); if (phase !== 'sending') handleSendSms(); }}
+          disabled={phase === 'sending'}>
+          인증번호 받기
         </button>
       </div>
-
-      {/* ── 키보드 슬라이더 ── */}
-      <div
-        ref={sliderRef}
-        style={{ ...S.kbSlider, transform: kbVisible ? 'translateY(0)' : 'translateY(100%)' }}
-        onMouseDown={e => { e.preventDefault(); e.stopPropagation(); }}
-      >
-        {kbMode === 'korean' ? (
-          <KoreanKB
-            isShifted={isShifted}
-            onChar={handleCharKey}
-            onBackspace={handleBackspace}
-            onClear={handleClear}
-            onConfirm={handleConfirm}
-            onShift={() => setIsShifted(p => !p)}
-          />
-        ) : (
-          <NumericKB
-            onNum={handleNumKey}
-            onBackspace={handleBackspace}
-            onConfirm={handleConfirm}
-          />
-        )}
+      <div ref={sliderRef} style={{ ...S.kbSlider, transform: kbVisible ? 'translateY(0)' : 'translateY(100%)' }}
+        onMouseDown={e => { e.preventDefault(); e.stopPropagation(); }}>
+        {kbMode === 'korean'
+          ? <KoreanKB isShifted={isShifted} onChar={handleCharKey} onBackspace={handleBackspace} onClear={handleClear} onConfirm={handleConfirm} onShift={() => setIsShifted(p => !p)} />
+          : <NumericKB onNum={handleNumKey} onBackspace={handleBackspace} onConfirm={handleConfirm} />
+        }
       </div>
-
-      {/* ── 성공 모달 ── */}
-      {showSuccess && (
-        <div style={S.modalOverlay}>
-          <div style={S.modalCard}>
-            <div style={{ fontSize: 52, marginBottom: 12 }}>✅</div>
-            <h3 style={{ fontSize: 22, fontWeight: 700, color: '#16a34a', marginBottom: 6 }}>본인인증 완료</h3>
-            <p style={{ fontSize: 14, color: '#6B7280', lineHeight: 1.6 }}>아래 정보로 인증이 완료되었습니다.</p>
-            <div style={S.modalData}>
-              <DataRow label="이름"   value={form.name} />
-              <DataRow label="주민번호" value={`${form.rrnFront} - ${form.rrnBack}●●●●●●`} />
-              <DataRow label="통신사"  value={form.carrier.toUpperCase()} />
-              <DataRow label="휴대폰"  value={form.phone ? fmtPhone(form.phone) : '(미입력)'} />
-            </div>
-            <button style={S.modalClose} onMouseDown={e => { e.preventDefault(); setShowSuccess(false); handleReset(); }}>
-              확인
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
@@ -673,7 +675,7 @@ export const KioskIdentityForm: React.FC<KioskIdentityFormProps> = ({ onComplete
 ════════════════════════════════════════════════════════════ */
 const KR_ROW1 = ['ㄱ','ㄴ','ㄷ','ㄹ','ㅁ','ㅏ','ㅑ','ㅓ','ㅕ'];
 const KR_ROW2 = ['ㅂ','ㅅ','ㅇ','ㅈ','ㅊ','ㅗ','ㅛ','ㅣ','ㅐ'];
-const KR_ROW3 = ['ㅋ','ㅌ','ㅍ','ㅎ','ㅜ','ㅠ','ㅡ','ㅢ'];
+const KR_ROW3 = ['ㅋ','ㅌ','ㅍ','ㅎ','ㅜ','ㅠ','ㅡ','ㅔ'];
 
 interface KoreanKBProps {
   isShifted: boolean;
@@ -809,6 +811,7 @@ const S: Record<string, React.CSSProperties> = {
   fieldLabel:   { fontSize: '0.9rem', fontWeight: 600, color: '#374151' },
   req: { color: '#EF4444', marginLeft: 2 },
   opt: { fontSize: '0.78rem', color: '#9CA3AF', fontWeight: 400 },
+  hint: { fontSize: '0.76rem', color: '#9CA3AF', fontWeight: 400, marginLeft: 4 },
 
   inputBox: {
     minHeight: 48, padding: '10px 16px', borderRadius: 10,
@@ -930,6 +933,23 @@ const S: Record<string, React.CSSProperties> = {
   },
   kbNumDel:  { background: '#f87171', boxShadow: '0 1px 3px rgba(248,113,113,0.3)' },
   kbNumDone: { background: '#3b82f6', boxShadow: '0 1px 3px rgba(59,130,246,0.3)' },
+
+  /* 인라인 키패드 (code 단계용 — 슬라이더 아님) */
+  inlineNumKey: {
+    width: 74, height: 74, borderRadius: 12,
+    border: '1.5px solid rgba(0,0,0,0.09)', background: '#ffffff',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 26, fontWeight: 500, color: '#1a1f36',
+    cursor: 'pointer', outline: 'none', fontFamily: 'inherit',
+    transition: 'transform 0.1s, background 0.1s', userSelect: 'none' as const,
+  },
+  inlineNumAction: {
+    flex: 1, height: 48, borderRadius: 9, border: 'none',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer', outline: 'none', fontFamily: 'inherit',
+    color: '#fff', transition: 'transform 0.1s', userSelect: 'none' as const,
+  },
 
   /* 성공 모달 */
   modalOverlay: {

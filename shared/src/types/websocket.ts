@@ -28,7 +28,21 @@ export type ServerWSEvent =
   | { type: 'response.done' }
   | { type: 'conversation.item.input_audio_transcription.completed'; transcript: string }
   | { type: 'transcription.filtered' }
-  | { type: 'error'; error: string; code: string };
+  | { type: 'error'; error: string; code: string }
+  | {
+      type: 'pino.apply_check_result';
+      accessToken: string;
+      carrier: string;
+      phone: string;
+      govDocId: string;
+      applyOptionList: Array<{
+        groupCode: string;
+        groupCodeName: string;
+        multiAbleAt: 'Y' | 'N';
+        requiredAt: 'Y' | 'N';
+        childList: Array<{ code: string; name: string; desc?: string }>;
+      }>;
+    };
 
 /** WebSocket session configuration */
 export interface WSSessionConfig {

@@ -28,7 +28,7 @@ const STATE_META: Record<VoiceState, { label: string; color: string }> = {
   idle:       { label: '대기 중',       color: '#94a3b8' },
   listening:  { label: '듣고 있어요',   color: '#3b82f6' },
   processing: { label: '처리 중...',    color: '#a855f7' },
-  speaking:   { label: '말하고 있어요', color: '#22c55e' },
+  speaking:   { label: 'AI가 응답중입니다. 잠시만 기다려주세요.', color: '#3b82f6' },
   error:      { label: '오류',          color: '#ef4444' },
 };
 
@@ -37,8 +37,15 @@ export const VoiceStateIndicator: React.FC = () => {
   const voiceState   = useStore(s => s.voiceState);
   const audioLevel   = useStore(s => s.audioLevel);
   const errorMessage = useStore(s => s.errorMessage);
+  const isMuted      = useStore(s => s.isMuted);
 
-  const { label, color } = STATE_META[voiceState];
+  const meta = STATE_META[voiceState];
+  const label = (voiceState === 'listening' && isMuted)
+    ? 'AI가 응답중입니다. 잠시만 기다려주세요.'
+    : meta.label;
+  const color = (voiceState === 'listening' && isMuted)
+    ? '#3b82f6'
+    : meta.color;
 
   /* Scale the listening ring based on RMS (0-1). */
   const rmsScale = useMemo(
