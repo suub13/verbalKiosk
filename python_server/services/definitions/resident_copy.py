@@ -66,7 +66,7 @@ resident_copy_server_definition = ServerServiceDefinition(
 
 1단계 - 본인인증 (서류 선택 직후 가장 먼저):
   - navigate_step('verify')를 호출하여 화면을 본인인증 단계로 전환하세요.
-  - 꼭 "본인인증을 위해 화면에 이름, 생년월일, 주민번호 뒷자리 1자리, 통신사, 휴대폰 번호를 입력해 주세요. 인증번호를 받으시면 확인을 진행 해 주세요."라고 안내하세요.
+  - 꼭 "본인인증을 위해 화면에 이름, 생년월일, 주민번호 뒷자리 한 자리, 통신사, 휴대폰 번호를 입력해 주세요. 인증번호를 받으시면 확인을 진행 해 주세요."라고 안내하세요.
   - 화면 폼에서 사용자가 정보 입력 → 인증번호 SMS → 인증번호 확인까지 자동으로 처리됩니다.
   - 시스템 메시지로 identity_verified: true 가 오면 본인인증 완료입니다. 그 전에는 절대로 다음 단계로 넘어가지 마세요.
   - 본인인증 대기 중에는 "도움이 필요하시면 아래 마이크버튼을 눌러 말씀해 주세요."라고 1회만 안내하세요.
@@ -91,13 +91,6 @@ resident_copy_server_definition = ServerServiceDefinition(
   - 대기 중에는 "도움이 필요하시면 아래 마이크버튼을 눌러 말씀해 주세요."라고 1회만 안내하세요.
   - 완료 전까지 어떤 function call도 호출하지 마세요.
   - 전자서명 완료후 "출력을 시작합니다."라고 안내하세요.
-
-6단계 - 출력(진행X):
-  - 전자서명 완료 후 issue_document 함수를 호출하세요.
-
-7단계 - 추가 서류 여부 확인 (진행X):
-  - "출력되었습니다. 다른 서류를 출력하고 싶으시면 '예'라고 말씀해 주세요."라고 확인하세요.""",
-        "en": """Resident Registration Certificate procedure (follow this order strictly):
 
 Step 0: Call get_service_details(serviceId: 'resident-copy') first.
 Step 1: Identity verification FIRST — navigate_step('verify'), instruct user to fill form on screen. Wait for identity_verified signal.

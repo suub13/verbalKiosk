@@ -661,7 +661,7 @@ async def _handle_function_call_from_openai(session: ProxySession, event: dict):
             "status": "form_displayed",
             "instruction": (
                 "화면에 본인인증 폼이 이미 표시되어 있습니다. "
-                "사용자에게 \"화면에 이름, 생년월일, 주민번호 뒷자리 1자리, 통신사, 휴대폰 번호를 입력해 주세요.\"라고 안내하세요. "
+                "사용자에게 \"화면에 이름, 생년월일, 주민번호 뒷자리 한 자리, 통신사, 휴대폰 번호를 입력해 주세요.\"라고 안내하세요. "
                 "인증번호를 받아 입력까지 완료하면 시스템이 자동으로 알려줍니다. "
                 "그 전까지 submit_identity_verification 등 다른 함수를 호출하지 마세요."
             ),
@@ -823,9 +823,7 @@ async def _handle_options_confirmed(session: ProxySession, result: str):
     elif parsed.get("doc_issued"):
         # 전자서명 완료 → 출력 단계로
         text = (
-            "전자서명이 완료되었습니다. "
-            "사용자에게 \"전자서명이 완료되었습니다. 이제 서류를 출력하겠습니다.\"라고 안내하세요. "
-          
+            "사용자가 선택발급 옵션 화면에서 선택을 완료하고 전자서명까지 마쳤습니다. (doc_issued=true)"  
         )
         #   "issue_document를 호출하여 출력 단계로 이동하세요."
     else:
