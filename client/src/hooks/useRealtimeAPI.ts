@@ -277,6 +277,8 @@ export function useRealtimeAPI() {
       },
       disconnect: () => pipelineRef.current?.disconnect(),
       sendMicUnblock: () => pipelineRef.current?.sendMicUnblock(),
+      startStreaming: () => pipelineRef.current?.startAudioStreaming(),
+      stopStreaming: () => pipelineRef.current?.stopAudioStreaming(),
     });
 
     // 교정 거부(아니요) 시 롤백 핸들러 등록

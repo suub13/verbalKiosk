@@ -11,6 +11,8 @@ interface BridgeHandlers {
   onCorrectionRejected: () => void;
   disconnect: () => void;
   sendMicUnblock: () => void;
+  startStreaming: () => void;
+  stopStreaming: () => void;
 }
 
 type PartialHandlers = Partial<BridgeHandlers>;
@@ -46,6 +48,14 @@ export const pipelineBridge = {
 
   get sendMicUnblock(): (() => void) | null {
     return handlers.sendMicUnblock ?? null;
+  },
+
+  get startStreaming(): (() => void) | null {
+    return handlers.startStreaming ?? null;
+  },
+
+  get stopStreaming(): (() => void) | null {
+    return handlers.stopStreaming ?? null;
   },
 
 };

@@ -3,7 +3,7 @@
  * Extracted from WorkflowPanel — only resident-copy-specific UI lives here.
  */
 
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState as useLocalState } from 'react';
 import { useStore } from '@/store';
 import type { ResidentCopyData, ApplyOptionGroup, ApplyOptionItem } from './residentCopy';
 import { ISSUANCE_CHECKBOX_GROUPS, confirmResidentCopyOptions, cancelResidentCopyOptions } from './residentCopy';
@@ -196,6 +196,63 @@ export function OptionsDetail({ data }: { data: ResidentCopyData }) {
   );
 }
 
+/* ── 공통: 마이크 도움말 버튼 ── */
+export function MicHelpButton() {
+  const [micOpen, setMicOpen] = React.useState(false);
+  const [countdown, setCountdown] = React.useState(0);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleHelpPress = React.useCallback(async () => {
+    if (micOpen) return;
+    setMicOpen(true);
+    setCountdown(10);
+    const { useStore: s } = await import('@/store');
+    s.getState().setMuted(false);
+
+    let secs = 10;
+    const tick = async () => {
+      secs -= 1;
+      setCountdown(secs);
+      if (secs <= 0) {
+        setMicOpen(false);
+        const { useStore: s2 } = await import('@/store');
+        s2.getState().setMuted(true);
+      } else {
+        timerRef.current = setTimeout(tick, 1000);
+      }
+    };
+    timerRef.current = setTimeout(tick, 1000);
+  }, [micOpen]);
+
+  React.useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  return (
+    <div style={{
+      position: 'absolute', bottom: 24, right: 16,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+      zIndex: 10,
+    }}>
+      <button
+        onMouseDown={e => { e.preventDefault(); handleHelpPress(); }}
+        disabled={micOpen}
+        style={{
+          width: 64, height: 64, borderRadius: '50%', border: 'none',
+          cursor: micOpen ? 'default' : 'pointer',
+          background: micOpen ? '#10B981' : '#F59E0B',
+          color: '#fff', fontSize: 26, boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          transition: 'all 0.2s',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        🎙️
+      </button>
+      <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 600, textAlign: 'center' }}>
+        {micOpen ? `${countdown}초` : '도움말'}
+      </span>
+    </div>
+  );
+}
+
 /* ── Sign step — 전자서명 방법 선택 + 서명 진행 ── */
 export function SignDetail({ data }: { data: ResidentCopyData }) {
   const patchServiceData = useStore(s => s.patchServiceData);
@@ -250,10 +307,35 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
       body: JSON.stringify({ govDocId: data.pinoGovDocId, signToken }),
     });
     const json = await res.json();
+
+  // ✅ 여기 추가 (거절 응답 확인용)
+      console.log('[pino/apply polling] status:', res.status);
+      console.log('[pino/apply polling] body:', JSON.stringify(json, null, 2));
     if (json.success) {
       setApplyPhase('done');
-      const { pipelineBridge } = await import('@/services/pipelineBridge');
-      pipelineBridge.sendOptionsConfirmed?.(JSON.stringify({ doc_issued: true, result: json.data }));
+
+      // 완료 화면을 1.5초 보여준 후 → pipelineBridge 신호 + navigate
+      // (신호를 먼저 보내면 AI가 출력 단계로 넘겨버리므로 setTimeout 안에서 함께 실행)
+      const resultData = json.data;
+      setTimeout(async () => {
+        const { pipelineBridge } = await import('@/services/pipelineBridge');
+        pipelineBridge.sendOptionsConfirmed?.(JSON.stringify({ doc_issued: true, result: resultData }));
+
+        const previewUrl = 'https://stg.pinokr.com:48450/kiosk/services/print/preview';
+        if (window.parent !== window) {
+          // iframe 안 → 부모에게 navigate 요청
+          window.parent.postMessage({ action: 'navigate', url: previewUrl }, '*');
+        } else {
+          // 직접 접근 → 현재 탭 이동
+          window.location.href = previewUrl;
+        }
+      }, 1500);
+      // ── 기존 출력 프로세스 로직 (비활성화) ──────────────────────────
+      // window.open(previewUrl, '_blank');
+      // window.parent.postMessage({ action: 'close' }, '*');
+      // window.close();
+      // ─────────────────────────────────────────────────────────────────
+
       return true;
     }
     // 사용자가 아직 Naver 앱에서 승인 안 한 상태 → 재시도
@@ -314,10 +396,11 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
   // ── 완료 화면
   if (applyPhase === 'done') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 24px' }}>
+      <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 24px', height: '100%' }}>
         <div style={{ fontSize: 72, marginBottom: 20 }}>✅</div>
         <h2 style={{ fontSize: 26, fontWeight: 700, color: '#1e293b', marginBottom: 8 }}>전자서명 완료</h2>
-        <p style={{ fontSize: 18, color: '#64748b' }}>전자증명서 발급이 완료되었습니다. 출력 단계로 이동합니다.</p>
+        <p style={{ fontSize: 18, color: '#64748b' }}>전자증명서 발급이 완료되었습니다. 미리보기로 이동합니다...</p>
+        <MicHelpButton />
       </div>
     );
   }
@@ -326,7 +409,7 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
   if (applyPhase === 'waiting') {
     const provider = SIGN_PROVIDERS.find(p => p.id === selectedProvider) ?? SIGN_PROVIDERS[0];
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 24px', gap: 20 }}>
+      <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 24px', gap: 20, height: '100%' }}>
         <div style={{ fontSize: 52 }}>📲</div>
         <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1e293b', textAlign: 'center' }}>{provider.emoji} {provider.label} 앱에서 인증을 완료해 주세요</h2>
         <p style={{ fontSize: 16, color: '#64748b', textAlign: 'center', lineHeight: 1.7 }}>
@@ -358,13 +441,14 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
         >
           처음으로 돌아가기
         </button>
+        <MicHelpButton />
       </div>
     );
   }
 
   // ── 전자서명 방법 선택 화면 (버튼 클릭 시 즉시 신청)
   return (
-    <div>
+    <div style={{ position: 'relative' }}>
       <h3 style={detailTitleStyle}>전자서명</h3>
       <p style={detailDescStyle}>전자서명 방법을 선택하면 즉시 전자증명서가 신청됩니다.</p>
 
@@ -401,6 +485,7 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
       </div>
 
       {errorMsg && <div style={{ marginTop: 12, padding: '10px 16px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', color: '#DC2626', fontSize: 14 }}>⚠️ {errorMsg}</div>}
+      <MicHelpButton />
     </div>
   );
 }

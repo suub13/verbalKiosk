@@ -91,7 +91,7 @@ Response validation rules (CRITICAL):
 
 GREETING_KO = """
 첫 인사 (반드시 아래 내용을 자연스럽게 음성으로 전달하세요):
-"안녕하세요. 주민등록등본, 건강보험 자격득실 확인서, 납세증명서를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?" """
+"안녕하세요, 주민등록등본, 건강보험 자격득실 확인서, 납세증명서 중 어떤 서류를 발급받으시겠어요?" """
 
 GREETING_EN = """
 First greeting (you MUST speak this naturally):
@@ -128,15 +128,13 @@ def build_greeting_ko() -> str:
             count_str = f" {count}가지 서류를"
         greeting_text = (
             f"안녕하세요. "
-            f"{doc_list_str}, {count_str} 발급받으실 수 있습니다. "
-            f"어떤 서류를 발급받으시겠어요?"
+            f"{doc_list_str} 중 어떤 서류를 발급받으시겠어요?"
         )
     else:
         # fallback — Pino API 미연결 시 기존 문구 사용
         greeting_text = (
             "안녕하세요. "
-            "주민등록등본, 건강보험 자격득실 확인서, 납세증명서, "
-            "세 가지 서류를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?"
+            "주민등록등본, 건강보험 자격득실 확인서, 납세증명서 중 어떤 서류를 발급받으시겠어요?"
         )
     return f'\n첫 인사 (반드시 아래 내용을 자연스럽게 음성으로 전달하세요):\n"{greeting_text}" '
 

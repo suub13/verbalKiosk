@@ -9,3 +9,4 @@ python_server/__pycache__/
 python_server/config/__pycache__/
 *.zip
 **/__pycache__/
+__pycache__/

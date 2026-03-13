@@ -20,6 +20,7 @@ import { useStore } from '@/store';
 import { pipelineBridge } from '@/services/pipelineBridge';
 import type { WorkflowStep } from '@/store/slices/conversationSlice';
 import { getServiceDefinition } from '@/services/definitions/registry';
+import { MicHelpButton } from '@/services/definitions/residentCopyStepRenderer';
 import { KioskIdentityForm } from '@/components/conversation/KioskIdentityForm';
 import { issueBridge } from '@/services/issueBridge';
 
@@ -242,13 +243,13 @@ function VerifyDetail() {
     setMicOpen(true);
     setCountdown(10);
 
-    // pipelineBridge 싱글톤으로 서버 mic_blocked 해제
+    // 1. 서버 mic_blocked 해제
     pipelineBridge.sendMicUnblock?.();
-
-    // AudioEngine 싱글톤으로 직접 캡처 시작
-    const { AudioEngine } = await import('@/services/audioEngine');
-    const audioEngine = AudioEngine.getInstance();
-    await audioEngine.startMicCapture();
+    // 2. onAudioData 콜백 등록 (캡처 → WebSocket 전송 연결)
+    pipelineBridge.startStreaming?.();
+    // 3. store isMuted=false → useVoicePipeline effect가 startCapture() 자동 호출
+    const { useStore: _s } = await import('@/store');
+    _s.getState().setMuted(false);
 
     let secs = 10;
     const tick = async () => {
@@ -256,7 +257,9 @@ function VerifyDetail() {
       setCountdown(secs);
       if (secs <= 0) {
         setMicOpen(false);
-        audioEngine.stopMicCapture();
+        // 다시 mute → useVoicePipeline effect가 stopCapture() 자동 호출
+        _s.getState().setMuted(true);
+        pipelineBridge.stopStreaming?.();
       } else {
         timerRef.current = setTimeout(tick, 1000);
       }
@@ -270,28 +273,7 @@ function VerifyDetail() {
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
       <KioskIdentityForm />
-      {/* 도움 버튼 — verify 중 마이크가 꺼져있을 때 임시로 열어주는 버튼 */}
-      <div style={{
-        position: 'absolute', bottom: 80, right: 16,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-      }}>
-        <button
-          onMouseDown={e => { e.preventDefault(); handleHelpPress(); }}
-          disabled={micOpen}
-          style={{
-            width: 64, height: 64, borderRadius: '50%', border: 'none', cursor: micOpen ? 'default' : 'pointer',
-            background: micOpen ? '#10B981' : '#F59E0B',
-            color: '#fff', fontSize: 26, boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-            transition: 'all 0.2s',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        >
-          {micOpen ? '🎙️' : '🎙️'}
-        </button>
-        <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 600, textAlign: 'center' }}>
-          {micOpen ? `${countdown}초` : '도움말'}
-        </span>
-      </div>
+      <MicHelpButton />
     </div>
   );
 }
