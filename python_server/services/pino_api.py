@@ -33,19 +33,8 @@ def get_doc_list() -> list[dict]:
 
     all_docs: list[dict] = body.get("govDocList", [])
     # useAt == 'Y' 만 필터링
-    # available = [d for d in all_docs if d.get("useAt") == "Y"]
-    available = [{'govDocId': '1', 'govDocNm': '주민등록 등본', 'useAt': 'Y'},
- {'govDocId': '7', 'govDocNm': '건강보험 자격득실 확인', 'useAt': 'Y'},
- {'govDocId': '10', 'govDocNm': '납세 증명', 'useAt': 'Y'},
- {'govDocId': '4', 'govDocNm': '주민등록 초본', 'useAt': 'N'},
- {'govDocId': '13', 'govDocNm': '토지(임야) 대장', 'useAt': 'N'},
- {'govDocId': '16', 'govDocNm': '건축물 대장', 'useAt': 'N'},
- {'govDocId': '19', 'govDocNm': '지방세 납세증명', 'useAt': 'N'},
- {'govDocId': '22', 'govDocNm': '지적도 (임야도)', 'useAt': 'N'},
- {'govDocId': '25', 'govDocNm': '자동차등록 원부', 'useAt': 'N'},
- {'govDocId': '28', 'govDocNm': '소득금액 증명', 'useAt': 'N'},
- {'govDocId': '31', 'govDocNm': '운전경력 증명', 'useAt': 'N'},
- {'govDocId': '34', 'govDocNm': '사업자등록 증명', 'useAt': 'N'}]
+    available = [d for d in all_docs if d.get("useAt") == "Y"]
+
     return available
 
 
@@ -177,7 +166,6 @@ def apply_sign(
         "userPhone": userPhone,
         "applyOptionList": applyOptionList,
     }
-    print(data)
     resp = requests.post(
         url,
         headers={"Content-Type": "application/json", "accessToken": access_token},

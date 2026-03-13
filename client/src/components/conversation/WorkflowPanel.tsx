@@ -17,10 +17,10 @@
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { useStore } from '@/store';
+import { pipelineBridge } from '@/services/pipelineBridge';
 import type { WorkflowStep } from '@/store/slices/conversationSlice';
 import { getServiceDefinition } from '@/services/definitions/registry';
 import { KioskIdentityForm } from '@/components/conversation/KioskIdentityForm';
-import { pipelineBridge } from '@/services/pipelineBridge';
 import { issueBridge } from '@/services/issueBridge';
 
 const GENERIC_STEPS = [
@@ -241,9 +241,14 @@ function VerifyDetail() {
     if (micOpen) return;
     setMicOpen(true);
     setCountdown(10);
-    // useVoicePipeline의 isMuted effect가 setMuted(false)를 감지해 startCapture 자동 호출
-    const { useStore } = await import('@/store');
-    useStore.getState().setMuted(false);
+
+    // pipelineBridge 싱글톤으로 서버 mic_blocked 해제
+    pipelineBridge.sendMicUnblock?.();
+
+    // AudioEngine 싱글톤으로 직접 캡처 시작
+    const { AudioEngine } = await import('@/services/audioEngine');
+    const audioEngine = AudioEngine.getInstance();
+    await audioEngine.startMicCapture();
 
     let secs = 10;
     const tick = async () => {
@@ -251,14 +256,14 @@ function VerifyDetail() {
       setCountdown(secs);
       if (secs <= 0) {
         setMicOpen(false);
-        const { useStore: s } = await import('@/store');
-        s.getState().setMuted(true);
+        audioEngine.stopMicCapture();
       } else {
         timerRef.current = setTimeout(tick, 1000);
       }
     };
     timerRef.current = setTimeout(tick, 1000);
   }, [micOpen]);
+
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 

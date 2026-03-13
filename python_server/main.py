@@ -20,10 +20,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from routes.session import router as session_router
-from routes.transcribe import router as transcribe_router
-from routes.tts import router as tts_router
-from routes.chat import router as chat_router
-from routes.document import router as document_router
 from routes.transcribe_phone import router as transcribe_phone_router
 from routes.pino import router as pino_router
 from websocket.realtime_proxy import (
@@ -57,10 +53,6 @@ async def add_cross_origin_isolation(request: Request, call_next):
 
 # REST Routes
 app.include_router(session_router, prefix="/api/session")
-app.include_router(transcribe_router, prefix="/api/transcribe")
-app.include_router(tts_router, prefix="/api/tts")
-app.include_router(chat_router, prefix="/api/chat")
-app.include_router(document_router, prefix="/api/document")
 app.include_router(transcribe_phone_router, prefix="/api/transcribe-phone")
 app.include_router(pino_router, prefix="/api/pino")
 

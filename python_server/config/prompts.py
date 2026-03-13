@@ -91,11 +91,11 @@ Response validation rules (CRITICAL):
 
 GREETING_KO = """
 첫 인사 (반드시 아래 내용을 자연스럽게 음성으로 전달하세요):
-"안녕하세요, 우리은행 발급/출력 도우미입니다. 이 키오스크에서는 주민등록등본, 건강보험 자격득실 확인서, 납세증명서, 이렇게 세 가지 서류를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?" """
+"안녕하세요. 주민등록등본, 건강보험 자격득실 확인서, 납세증명서를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?" """
 
 GREETING_EN = """
 First greeting (you MUST speak this naturally):
-"Hello, I'm the Woori Bank Document Issuance assistant. At this kiosk, you can issue three types of documents: Resident Registration Certificate, Health Insurance Qualification Certificate, and Tax Payment Certificate. Which document would you like to issue?" """
+"Hello. You can issue Resident Registration Certificate, Health Insurance Qualification Certificate, and Tax Payment Certificate. Which document would you like to issue?" """
 
 
 # ── 동적 서류 목록 기반 GREETING 빌더 ─────────────────────────────────────────
@@ -125,18 +125,18 @@ def build_greeting_ko() -> str:
             count_str = "한 가지 서류를"
         else:
             doc_list_str = ", ".join(doc_names[:-1]) + f", {doc_names[-1]}"
-            count_str = f"이렇게 {count}가지 서류를"
+            count_str = f" {count}가지 서류를"
         greeting_text = (
-            f"안녕하세요, 우리은행 발급/출력 도우미입니다. "
-            f"이 키오스크에서는 {doc_list_str}, {count_str} 발급받으실 수 있습니다. "
+            f"안녕하세요. "
+            f"{doc_list_str}, {count_str} 발급받으실 수 있습니다. "
             f"어떤 서류를 발급받으시겠어요?"
         )
     else:
         # fallback — Pino API 미연결 시 기존 문구 사용
         greeting_text = (
-            "안녕하세요, 우리은행 발급/출력 도우미입니다. "
-            "이 키오스크에서는 주민등록등본, 건강보험 자격득실 확인서, 납세증명서, "
-            "이렇게 세 가지 서류를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?"
+            "안녕하세요. "
+            "주민등록등본, 건강보험 자격득실 확인서, 납세증명서, "
+            "세 가지 서류를 발급받으실 수 있습니다. 어떤 서류를 발급받으시겠어요?"
         )
     return f'\n첫 인사 (반드시 아래 내용을 자연스럽게 음성으로 전달하세요):\n"{greeting_text}" '
 

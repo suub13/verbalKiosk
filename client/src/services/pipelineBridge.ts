@@ -10,6 +10,7 @@ interface BridgeHandlers {
   sendOptionsConfirmed: (result: string) => void;
   onCorrectionRejected: () => void;
   disconnect: () => void;
+  sendMicUnblock: () => void;
 }
 
 type PartialHandlers = Partial<BridgeHandlers>;
@@ -41,6 +42,10 @@ export const pipelineBridge = {
 
   get disconnect(): (() => void) | null {
     return handlers.disconnect ?? null;
+  },
+
+  get sendMicUnblock(): (() => void) | null {
+    return handlers.sendMicUnblock ?? null;
   },
 
 };

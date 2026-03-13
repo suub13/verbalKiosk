@@ -1,13 +1,12 @@
 /**
- * Main hook orchestrating voice pipeline selection and session management.
- * Coordinates between Realtime API (Service 1) and Cascaded (Service 2).
+ * Main hook orchestrating voice pipeline session management.
+ * Realtime API pipeline for voice issuance guide.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
 import { useStore } from '@/store';
 import { useAudioEngine } from './useAudioEngine';
 import { useRealtimeAPI } from './useRealtimeAPI';
-import type { PipelineMode } from '@shared/types/voice';
 import { getErrorMessage } from '@shared/utils/errors';
 import { pipelineBridge } from '@/services/pipelineBridge';
 
@@ -20,10 +19,9 @@ export function useVoicePipeline() {
     stopPlayback,
   } = useAudioEngine();
 
-  const { connect, disconnect, startStreaming, stopStreaming, cancelResponse } = useRealtimeAPI();
+  const { connect, disconnect, startStreaming, stopStreaming, cancelResponse, sendMicUnblock } = useRealtimeAPI();
 
   const voiceState = useStore(s => s.voiceState);
-  const pipelineMode = useStore(s => s.pipelineMode);
   const language = useStore(s => s.language);
   const workflowCurrentStep = useStore(s => s.workflowCurrentStep);
   const transition = useStore(s => s.transition);
@@ -32,7 +30,7 @@ export function useVoicePipeline() {
   const setError = useStore(s => s.setError);
 
   /** Initialize audio and create session */
-  const startSession = useCallback(async (mode: PipelineMode) => {
+  const startSession = useCallback(async () => {
     try {
       // Initialize audio engine (requires user gesture)
       await initAudio();
@@ -43,7 +41,7 @@ export function useVoicePipeline() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           language,
-          serviceType: mode === 'realtime' ? 'conversation' : 'document',
+          serviceType: 'conversation',
         }),
       });
 
@@ -52,23 +50,20 @@ export function useVoicePipeline() {
 
       setSession(data.data.sessionId, data.data.expiresAt);
 
-      // Connect to appropriate pipeline
-      if (mode === 'realtime') {
-        const sessionId = useStore.getState().sessionId;
-        await connect({
-          sessionId: sessionId || undefined,
-          language,
-          turnDetection: {
-            type: 'server_vad',
-            threshold: 0.5,
-            prefix_padding_ms: 500,
-            silence_duration_ms: 500,
-          },
-        });
-        startStreaming();
-        await startCapture();
-        transition('listening');
-      }
+      const sessionId = useStore.getState().sessionId;
+      await connect({
+        sessionId: sessionId || undefined,
+        language,
+        turnDetection: {
+          type: 'server_vad',
+          threshold: 0.5,
+          prefix_padding_ms: 500,
+          silence_duration_ms: 500,
+        },
+      });
+      startStreaming();
+      await startCapture();
+      transition('listening');
     } catch (err) {
       setError(getErrorMessage(err));
     }
@@ -102,16 +97,19 @@ export function useVoicePipeline() {
 
 
   /** Toggle microphone mute */
-  const toggleMute = useCallback(() => {
+  const toggleMute = useCallback(async () => {
     const isMuted = useStore.getState().isMuted;
     useStore.getState().setMuted(!isMuted);
 
     if (isMuted) {
-      startCapture();
+      sendMicUnblock();  // 서버 mic_blocked 해제
+      startStreaming();  // 먼저 콜백 등록 후 캡처 시작
+      await startCapture();
     } else {
       stopCapture();
+      stopStreaming();
     }
-  }, [startCapture, stopCapture]);
+  }, [startCapture, stopCapture, startStreaming, stopStreaming, sendMicUnblock]);
 
 
 
@@ -166,12 +164,28 @@ export function useVoicePipeline() {
 
 
 
+  /** 명시적 마이크 ON — isMuted 상태 무관하게 항상 열림 */
+  const unmuteMic = useCallback(async () => {
+    useStore.getState().setMuted(false);
+    sendMicUnblock();
+    startStreaming();
+    await startCapture();
+  }, [sendMicUnblock, startStreaming, startCapture]);
+
+  /** 명시적 마이크 OFF */
+  const muteMic = useCallback(() => {
+    useStore.getState().setMuted(true);
+    stopCapture();
+    stopStreaming();
+  }, [stopCapture, stopStreaming]);
+
   return {
     voiceState,
-    pipelineMode,
     isAudioReady,
     startSession,
     endSession,
     toggleMute,
+    unmuteMic,
+    muteMic,
   };
 }

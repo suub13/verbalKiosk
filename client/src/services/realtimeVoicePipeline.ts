@@ -101,6 +101,10 @@ export class RealtimeVoicePipeline {
     this.send({ type: 'options.confirmed', result });
   }
 
+  sendMicUnblock(): void {
+    this.send({ type: 'mic.unblock' } as any);
+  }
+
   isConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
   }

@@ -146,15 +146,13 @@ export function useRealtimeAPI() {
         transition('listening');
       },
 
-      /** 사용자 발화 종료: 처리 중 상태로 전환 및 플레이스홀더 메시지 생성 */
+      /** 사용자 발화 종료: 처리 중 상태로 전환, 음성 인식 결과 도착까지 메시지 생성 안 함 */
       onSpeechStopped: () => {
         // AI 텍스트 버퍼 초기화 (새 발화 시작)
         aiTranscriptBufferRef.current = '';
         aiTranscriptDoneRef.current = null;
         if (aiTranscriptHoldTimerRef.current) { clearTimeout(aiTranscriptHoldTimerRef.current); aiTranscriptHoldTimerRef.current = null; }
         transition('processing');
-        const id = addMessage('user', '…', true);
-        placeholderMsgIdRef.current = id;
       },
 
       /** AI 오디오 청크 수신: speaking 상태로 전환 */
@@ -278,6 +276,7 @@ export function useRealtimeAPI() {
         pipelineRef.current?.sendOptionsConfirmed(result);
       },
       disconnect: () => pipelineRef.current?.disconnect(),
+      sendMicUnblock: () => pipelineRef.current?.sendMicUnblock(),
     });
 
     // 교정 거부(아니요) 시 롤백 핸들러 등록
@@ -365,6 +364,10 @@ export function useRealtimeAPI() {
     pipelineRef.current?.cancelResponse();
   }, []);
 
+  const sendMicUnblock = useCallback(() => {
+    pipelineRef.current?.sendMicUnblock();
+  }, []);
+
   return {
     pipeline: pipelineRef.current,
     connect,
@@ -372,5 +375,6 @@ export function useRealtimeAPI() {
     startStreaming,
     stopStreaming,
     cancelResponse,
+    sendMicUnblock,
   };
 }
