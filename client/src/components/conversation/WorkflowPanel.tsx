@@ -19,6 +19,7 @@ import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { useStore } from '@/store';
 import type { WorkflowStep } from '@/store/slices/conversationSlice';
 import { getServiceDefinition } from '@/services/definitions/registry';
+import { MicHelpButton } from '@/services/definitions/residentCopyStepRenderer';
 import { KioskIdentityForm } from '@/components/conversation/KioskIdentityForm';
 import { pipelineBridge } from '@/services/pipelineBridge';
 import { issueBridge } from '@/services/issueBridge';
@@ -232,61 +233,10 @@ function StepDetail({ step, definition, serviceData }: StepDetailProps) {
    완료 시 pipelineBridge 로 identity_verified 신호 전달
 ════════════════════════════════════════════════════════════ */
 function VerifyDetail() {
-  const [micOpen, setMicOpen] = useState(false);
-  const [countdown, setCountdown] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // 도움 버튼: 10초간 마이크 임시 열기
-  const handleHelpPress = useCallback(async () => {
-    if (micOpen) return;
-    setMicOpen(true);
-    setCountdown(10);
-    // useVoicePipeline의 isMuted effect가 setMuted(false)를 감지해 startCapture 자동 호출
-    const { useStore } = await import('@/store');
-    useStore.getState().setMuted(false);
-
-    let secs = 10;
-    const tick = async () => {
-      secs -= 1;
-      setCountdown(secs);
-      if (secs <= 0) {
-        setMicOpen(false);
-        const { useStore: s } = await import('@/store');
-        s.getState().setMuted(true);
-      } else {
-        timerRef.current = setTimeout(tick, 1000);
-      }
-    };
-    timerRef.current = setTimeout(tick, 1000);
-  }, [micOpen]);
-
-  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
-
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
       <KioskIdentityForm />
-      {/* 도움 버튼 — verify 중 마이크가 꺼져있을 때 임시로 열어주는 버튼 */}
-      <div style={{
-        position: 'absolute', bottom: 80, right: 16,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-      }}>
-        <button
-          onMouseDown={e => { e.preventDefault(); handleHelpPress(); }}
-          disabled={micOpen}
-          style={{
-            width: 64, height: 64, borderRadius: '50%', border: 'none', cursor: micOpen ? 'default' : 'pointer',
-            background: micOpen ? '#10B981' : '#F59E0B',
-            color: '#fff', fontSize: 26, boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-            transition: 'all 0.2s',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        >
-          {micOpen ? '🎙️' : '🎙️'}
-        </button>
-        <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 600, textAlign: 'center' }}>
-          {micOpen ? `${countdown}초` : '도움말'}
-        </span>
-      </div>
+      <MicHelpButton />
     </div>
   );
 }

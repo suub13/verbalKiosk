@@ -133,22 +133,24 @@ export function useVoicePipeline() {
   }, [workflowCurrentStep, voiceState, endSession]);
 
   /**
-   * 본인인증 단계(verify) 진입 시 마이크 자동 OFF.
-   * identity_verified 신호 후 다른 단계로 넘어가면 자동 ON.
+   * 마이크 비활성 단계(verify/options/sign/issue) 진입 시 마이크 자동 OFF.
+   * 해당 단계에서 벗어나면 자동 ON.
    * 도움 버튼으로 isMuted가 외부에서 바뀌면 startCapture/stopCapture 반영.
    */
-  const isMuted = useStore(s => s.isMuted);
-  const micMutedForVerifyRef = useRef(false);
+  const MIC_INACTIVE_STEPS = ['verify', 'options', 'sign', 'issue'];
 
-  // verify 단계 진입/이탈 시 마이크 제어
+  const isMuted = useStore(s => s.isMuted);
+  const micMutedForInactiveRef = useRef(false);
+
+  // 마이크 비활성 단계 진입/이탈 시 마이크 제어
   useEffect(() => {
-    const isVerify = workflowCurrentStep === 'verify';
-    if (isVerify && !micMutedForVerifyRef.current) {
-      micMutedForVerifyRef.current = true;
+    const isInactive = MIC_INACTIVE_STEPS.includes(workflowCurrentStep ?? '');
+    if (isInactive && !micMutedForInactiveRef.current) {
+      micMutedForInactiveRef.current = true;
       stopCapture();
       useStore.getState().setMuted(true);
-    } else if (!isVerify && micMutedForVerifyRef.current) {
-      micMutedForVerifyRef.current = false;
+    } else if (!isInactive && micMutedForInactiveRef.current) {
+      micMutedForInactiveRef.current = false;
       useStore.getState().setMuted(false);
       startCapture();
     }
@@ -156,7 +158,7 @@ export function useVoicePipeline() {
 
   // 도움 버튼 등 외부에서 isMuted 변경 시 캡처 제어
   useEffect(() => {
-    if (!micMutedForVerifyRef.current) return; // verify 단계에서만 적용
+    if (!micMutedForInactiveRef.current) return; // 마이크 비활성 단계에서만 적용
     if (isMuted) {
       stopCapture();
     } else {
