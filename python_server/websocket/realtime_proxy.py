@@ -57,6 +57,8 @@ class ProxySession:
     last_correction_rejected_at: float = 0
     activity_task: Optional[asyncio.Task] = None
     mic_blocked: bool = False   # True during verify step — drop incoming audio
+    is_responding: bool = False  # True while OpenAI response is in progress
+    current_step: str = ""  # 현재 workflow step (navigate_step FC로 설정)
     # Pino 세션 데이터 — set_address 매핑 및 issue_document에 사용
     pino_access_token: str = ""
     pino_carrier: str = ""
@@ -140,7 +142,10 @@ async def _handle_client_message(session: ProxySession, data: str):
     elif t in ("audio.append", "audio.commit", "conversation.clear"):
         # 본인인증 단계 중 마이크 차단 — 오디오 버퍼를 OpenAI로 전달하지 않음
         if session.mic_blocked and t in ("audio.append", "audio.commit"):
+            print(f"[RealtimeProxy] Audio BLOCKED (mic_blocked) ({session.session_id})")
             return
+        if t == "audio.append":
+            print(f"[RealtimeProxy] Audio received → forwarding ({session.session_id})")
         await _forward_to_openai(session, event)
 
     elif t == "function_call.result":
@@ -153,6 +158,13 @@ async def _handle_client_message(session: ProxySession, data: str):
         # 사용자가 마이크 버튼을 눌러 수동으로 차단 해제
         session.mic_blocked = False
         print(f"[RealtimeProxy] Mic UNBLOCKED (manual) ({session.session_id})")
+        if session.openai_ws:
+            if session.is_responding:
+                try:
+                    # 응답 생성 중일 때만 취소 — 아닐 때 보내면 에러 발생
+                    await session.openai_ws.send(json.dumps({"type": "response.cancel"}))
+                except Exception:
+                    pass
 
     elif t == "options.confirmed":
         await _handle_options_confirmed(session, event.get("result", ""))
@@ -311,6 +323,11 @@ async def _handle_openai_message(session: ProxySession, raw: str):
 
             normalized_transcript = normalize_for_comparison(transcript)
 
+            # ── 발화 시간이 너무 짧으면 노이즈로 간주 (1.2초 미만 + 5글자 이하)
+            speech_duration = time.time() - session.last_speech_started_at
+            is_too_short = speech_duration < 1.2 and len(transcript) <= 5
+
+            # ── 명확한 hallucination 패턴만 필터 (STT prompt 내용과 무관)
             HALLUCINATION_PATTERNS = [
                 re.compile(r"^구동\s*좋아요[.!]?$"),
                 re.compile(r"^자막\s*(제공|한국어|번역)"),
@@ -320,19 +337,25 @@ async def _handle_openai_message(session: ProxySession, raw: str):
             ]
             is_hallucination = any(p.search(transcript.strip()) for p in HALLUCINATION_PATTERNS)
 
-            active_prompt = session.speech_start_stt_prompt or session.current_stt_prompt
-            normalized_prompt = normalize_for_comparison(active_prompt)
-            is_prompt_echo = len(transcript) > 10 and normalized_transcript in normalized_prompt
-
+            # ── 시스템 메시지가 그대로 인식된 경우
             is_system_echo = (
                 "시스템지시" in normalized_transcript
                 or "사용자가키오스크에방금도착했습니다" in normalized_transcript
-                or normalize_for_comparison(STT_STEP_PROMPTS["default"]) in normalized_transcript
+                or "우리은행키오스크서비스" in normalized_transcript
             )
 
-            if is_hallucination or is_prompt_echo or is_system_echo:
-                kind = "pattern" if is_hallucination else ("echo" if is_prompt_echo else "system")
-                print(f'[RealtimeProxy] Filtered hallucination ({kind}): "{transcript}" ({session.session_id})')
+            if is_hallucination or is_system_echo or is_too_short:
+                reasons = []
+                if is_hallucination: reasons.append("pattern")
+                if is_system_echo: reasons.append("system")
+                if is_too_short: reasons.append(f"too_short({speech_duration:.1f}s)")
+                print(f'[RealtimeProxy] Filtered hallucination ({",".join(reasons)}): "{transcript}" ({session.session_id})')
+                # OpenAI가 이미 응답 생성을 시작했을 수 있으므로 즉시 취소
+                if session.openai_ws:
+                    try:
+                        await session.openai_ws.send(json.dumps({"type": "response.cancel"}))
+                    except Exception:
+                        pass
                 await _send_to_client(session.client_ws, {"type": "transcription.filtered"})
                 return
 
@@ -342,22 +365,30 @@ async def _handle_openai_message(session: ProxySession, raw: str):
             })
 
         case "response.created":
+            session.is_responding = True
             await _send_to_client(session.client_ws, {"type": "response.created"})
 
         case "response.function_call_arguments.done":
             await _handle_function_call_from_openai(session, event)
 
         case "response.done":
+            session.is_responding = False
             _update_activity(session)
             await _send_to_client(session.client_ws, {"type": "response.done"})
 
         case "error":
             err = event.get("error") or {}
+            err_code = err.get("code", "") if isinstance(err, dict) else ""
+            err_msg = err.get("message", "") if isinstance(err, dict) else str(err)
+            # response.cancel 실패 에러는 무시 (hallucination 필터링 후 취소 시도 시 발생)
+            if "cancellation" in err_msg.lower() or "no active response" in err_msg.lower() or err_code == "response_cancel_failed":
+                print(f"[RealtimeProxy] Suppressed cancel error (expected): {err} ({session.session_id})")
+                return
             print(f"[RealtimeProxy] OpenAI error event ({session.session_id}): {err}")
             await _send_to_client(session.client_ws, {
                 "type": "error",
-                "error": err.get("message", "Unknown error") if isinstance(err, dict) else str(err),
-                "code": err.get("code", "OPENAI_ERROR") if isinstance(err, dict) else "OPENAI_ERROR",
+                "error": err_msg or "Unknown error",
+                "code": err_code or "OPENAI_ERROR",
             })
 
 
@@ -552,9 +583,11 @@ async def _handle_function_call_from_openai(session: ProxySession, event: dict):
         if name == "navigate_step":
             try:
                 step = json.loads(args).get("step", "")
-                if step == "verify":
+                session.current_step = step
+                MIC_BLOCKED_STEPS = {"verify", "sign"}
+                if step in MIC_BLOCKED_STEPS:
                     session.mic_blocked = True
-                    print(f"[RealtimeProxy] Mic BLOCKED (verify step) ({session.session_id})")
+                    print(f"[RealtimeProxy] Mic BLOCKED ({step} step) ({session.session_id})")
                 elif session.mic_blocked:
                     session.mic_blocked = False
                     print(f"[RealtimeProxy] Mic UNBLOCKED (step={step}) ({session.session_id})")
@@ -726,7 +759,11 @@ async def _handle_correction_rejection(session: ProxySession, step: Optional[str
 
     print(f"[RealtimeProxy] Correction rejected (step: {step or 'unknown'}) ({session.session_id})")
 
-    await session.openai_ws.send(json.dumps({"type": "response.cancel"}))
+    if session.is_responding:
+        try:
+            await session.openai_ws.send(json.dumps({"type": "response.cancel"}))
+        except Exception:
+            pass
 
     text = _get_reask_message(step or "")
     await session.openai_ws.send(json.dumps({
@@ -806,7 +843,7 @@ async def _handle_options_confirmed(session: ProxySession, result: str):
 
         text = (
             "사용자가 본인인증을 성공적으로 완료하였습니다. (identity_verified=true) "
-            "사용자에게 \"본인인증이 완료되었습니다. 이제 주민등록상 주소를 말씀해 주세요.\"라고 음성으로 안내한 후, "
+            "사용자에게 \"주민등록상 주소를 말씀해 주세요.\"라고 음성으로 안내한 후, "
             "navigate_step('address')를 호출하고 주소 입력을 진행하세요."
         )
         await session.openai_ws.send(json.dumps({
@@ -814,6 +851,10 @@ async def _handle_options_confirmed(session: ProxySession, result: str):
             "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": f"(시스템: {text})"}]},
         }))
         await session.openai_ws.send(json.dumps({"type": "response.create"}))
+        # ⚠️ 본인인증 완료 → 마이크 차단 즉시 해제 (address 단계부터 음성 수신)
+        session.mic_blocked = False
+        session.current_step = "address"
+        print(f"[RealtimeProxy] Mic UNBLOCKED (identity verified) ({session.session_id})")
         await _update_stt_prompt(session, "address_sido")
         print(f"[RealtimeProxy] Identity verified ({session.session_id})")
         return
@@ -823,7 +864,6 @@ async def _handle_options_confirmed(session: ProxySession, result: str):
     elif parsed.get("doc_issued"):
         # 전자서명 완료 → 출력 단계로
         text = (
-            "전자서명이 완료되었습니다. "
             "사용자에게 \"전자서명이 완료되었습니다. 이제 서류를 출력하겠습니다.\"라고 안내한 후, "
             "issue_document를 호출하여 출력 단계로 이동하세요."
         )
@@ -890,8 +930,8 @@ async def _forward_to_openai(session: ProxySession, event: dict):
 async def _activity_monitor(session: ProxySession):
     while True:
         await asyncio.sleep(SESSION_TIMINGS["ACTIVITY_CHECK_INTERVAL_MS"] / 1000)
-        # 마이크가 차단된 상태(본인인증 등)에서는 타이머를 멈춤
-        if session.mic_blocked:
+        # verify/sign 단계(사용자 입력 대기 중)에는 타이머를 리셋 — 마이크 ON/OFF 무관하게
+        if session.current_step in ("verify", "sign"):
             _update_activity(session)
             continue
         inactive_ms = (time.time() - session.last_activity_at) * 1000
