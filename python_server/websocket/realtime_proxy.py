@@ -824,9 +824,10 @@ async def _handle_options_confirmed(session: ProxySession, result: str):
         # 전자서명 완료 → 출력 단계로
         text = (
             "전자서명이 완료되었습니다. "
-            "사용자에게 \"전자서명이 완료되었습니다. 이제 서류를 출력하겠습니다.\"라고 안내한 후, "
-            "issue_document를 호출하여 출력 단계로 이동하세요."
+            "사용자에게 \"전자서명이 완료되었습니다. 이제 서류를 출력하겠습니다.\"라고 안내하세요. "
+          
         )
+        #   "issue_document를 호출하여 출력 단계로 이동하세요."
     else:
         # 발급옵션 선택 완료 → 전자서명 단계로
         text = (

@@ -4,6 +4,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState as useLocalState } from 'react';
+import { createPortal } from 'react-dom';
 import { useStore } from '@/store';
 import type { ResidentCopyData, ApplyOptionGroup, ApplyOptionItem } from './residentCopy';
 import { ISSUANCE_CHECKBOX_GROUPS, confirmResidentCopyOptions, cancelResidentCopyOptions } from './residentCopy';
@@ -93,7 +94,7 @@ export function OptionsDetail({ data }: { data: ResidentCopyData }) {
 
   // ── 옵션 선택 화면
   return (
-    <div>
+    <div style={{ position: 'relative' }}>
       <h3 style={detailTitleStyle}>선택발급 옵션</h3>
       <p style={detailDescStyle}>표시할 항목을 선택한 후 다음 단계로 진행해 주세요.</p>
 
@@ -172,16 +173,17 @@ export function OptionsDetail({ data }: { data: ResidentCopyData }) {
         })}
       </div>
 
-      {/* 취소 / 다음 단계 버튼 */}
-      <div style={{ display: 'flex', gap: 16, marginTop: 28 }}>
+      {/* 취소 / 마이크 / 다음 단계 버튼 */}
+      <div style={{ display: 'flex', gap: 16, marginTop: 28, alignItems: 'center' }}>
         <button
           onMouseDown={e => { e.preventDefault(); cancelResidentCopyOptions(); }}
           style={{ flex: '0 0 150px', padding: '20px 0', borderRadius: 16, border: '2px solid #d1d5db', background: '#fff', color: '#64748b', fontSize: 22, fontWeight: 700, cursor: 'pointer' }}
         >
           취소
         </button>
+        <MicHelpButtonInline />
         <button
-          onMouseDown={e => { e.preventDefault(); goToWorkflowStep('sign'); }}
+          onMouseDown={e => { e.preventDefault(); confirmResidentCopyOptions(); }}
           style={{
             flex: 1, padding: '20px 0', borderRadius: 16, border: 'none',
             background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
@@ -196,6 +198,12 @@ export function OptionsDetail({ data }: { data: ResidentCopyData }) {
   );
 }
 
+/* ── 인라인 마이크 도움말 버튼 (선택발급 옵션 버튼 행용) ── */
+/** MicHelpButtonInline — alias, renders the shared fixed floating button */
+export function MicHelpButtonInline() {
+  return <MicHelpButton />;
+}
+
 /* ── 공통: 마이크 도움말 버튼 ── */
 export function MicHelpButton() {
   const [micOpen, setMicOpen] = React.useState(false);
@@ -207,6 +215,9 @@ export function MicHelpButton() {
     setMicOpen(true);
     setCountdown(10);
     const { useStore: s } = await import('@/store');
+    const { pipelineBridge } = await import('@/services/pipelineBridge');
+    pipelineBridge.sendMicUnblock?.();
+    pipelineBridge.startStreaming?.();
     s.getState().setMuted(false);
 
     let secs = 10;
@@ -217,6 +228,7 @@ export function MicHelpButton() {
         setMicOpen(false);
         const { useStore: s2 } = await import('@/store');
         s2.getState().setMuted(true);
+        pipelineBridge.stopStreaming?.();
       } else {
         timerRef.current = setTimeout(tick, 1000);
       }
@@ -226,20 +238,24 @@ export function MicHelpButton() {
 
   React.useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
-  return (
+  const portalTarget = React.useMemo(() =>
+    document.getElementById('mic-portal-root') || document.body,
+  []);
+
+  return createPortal(
     <div style={{
-      position: 'absolute', bottom: 24, right: 16,
+      position: 'absolute', bottom: 40, right: 40,
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-      zIndex: 10,
+      zIndex: 9999, pointerEvents: 'auto',
     }}>
       <button
         onMouseDown={e => { e.preventDefault(); handleHelpPress(); }}
         disabled={micOpen}
         style={{
-          width: 64, height: 64, borderRadius: '50%', border: 'none',
+          width: 72, height: 72, borderRadius: '50%', border: 'none',
           cursor: micOpen ? 'default' : 'pointer',
           background: micOpen ? '#10B981' : '#F59E0B',
-          color: '#fff', fontSize: 26, boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          color: '#fff', fontSize: 28, boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
           transition: 'all 0.2s',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}
@@ -249,7 +265,8 @@ export function MicHelpButton() {
       <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 600, textAlign: 'center' }}>
         {micOpen ? `${countdown}초` : '도움말'}
       </span>
-    </div>
+    </div>,
+    portalTarget
   );
 }
 
@@ -267,6 +284,17 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
   const [selectedProvider, setSelectedProvider] = React.useState<string>(SIGN_PROVIDERS[0].id);
   const [isLoading, setIsLoading] = React.useState(false);
+
+  // 완료 화면 렌더 시 즉시 음성 출력
+  React.useEffect(() => {
+    if (applyPhase !== 'done') return;
+    const utterance = new SpeechSynthesisUtterance('전자증명서 발급이 완료되었습니다. 출력을 진행하겠습니다.');
+    utterance.lang = 'ko-KR';
+    utterance.rate = 1.0;
+    window.speechSynthesis.cancel(); // 혹시 이전 TTS가 재생 중이면 중단
+    window.speechSynthesis.speak(utterance);
+    return () => { window.speechSynthesis.cancel(); };
+  }, [applyPhase]);
 
   // Build applyOptionList from custom selections (options 단계에서 선택한 값)
   const buildApplyOptionList = () => {
@@ -314,27 +342,21 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
     if (json.success) {
       setApplyPhase('done');
 
-      // 완료 화면을 1.5초 보여준 후 → pipelineBridge 신호 + navigate
-      // (신호를 먼저 보내면 AI가 출력 단계로 넘겨버리므로 setTimeout 안에서 함께 실행)
       const resultData = json.data;
-      setTimeout(async () => {
-        const { pipelineBridge } = await import('@/services/pipelineBridge');
-        pipelineBridge.sendOptionsConfirmed?.(JSON.stringify({ doc_issued: true, result: resultData }));
 
+      // ① 완료 즉시 AI 파이프라인 신호 → AI가 바로 완료 멘트 음성 출력
+      const { pipelineBridge } = await import('@/services/pipelineBridge');
+      pipelineBridge.sendOptionsConfirmed?.(JSON.stringify({ doc_issued: true, result: resultData }));
+
+      // ② 완료 화면 2초 보여준 후 미리보기로 이동
+      setTimeout(() => {
         const previewUrl = 'https://stg.pinokr.com:48450/kiosk/services/print/preview';
         if (window.parent !== window) {
-          // iframe 안 → 부모에게 navigate 요청
           window.parent.postMessage({ action: 'navigate', url: previewUrl }, '*');
         } else {
-          // 직접 접근 → 현재 탭 이동
           window.location.href = previewUrl;
         }
-      }, 1500);
-      // ── 기존 출력 프로세스 로직 (비활성화) ──────────────────────────
-      // window.open(previewUrl, '_blank');
-      // window.parent.postMessage({ action: 'close' }, '*');
-      // window.close();
-      // ─────────────────────────────────────────────────────────────────
+      }, 2000);
 
       return true;
     }

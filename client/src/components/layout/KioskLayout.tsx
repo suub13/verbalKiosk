@@ -24,6 +24,8 @@ export const KioskLayout: React.FC<KioskLayoutProps> = ({ children }) => {
       {/* <div className="kiosk-layout__footer">
         <Footer />
       </div> */}
+      {/* Portal root — overflow:hidden 밖에서 마이크 버튼 렌더 */}
+      <div id="mic-portal-root" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 9999 }} />
     </div>
   );
 };

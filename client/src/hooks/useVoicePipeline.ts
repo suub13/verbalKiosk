@@ -142,17 +142,23 @@ export function useVoicePipeline() {
 
   // 마이크 비활성 단계 진입/이탈 시 마이크 제어
   useEffect(() => {
-    const isInactive = MIC_INACTIVE_STEPS.includes(workflowCurrentStep ?? '');
-    if (isInactive && !micMutedForInactiveRef.current) {
-      micMutedForInactiveRef.current = true;
-      stopCapture();
-      useStore.getState().setMuted(true);
-    } else if (!isInactive && micMutedForInactiveRef.current) {
-      micMutedForInactiveRef.current = false;
-      useStore.getState().setMuted(false);
-      startCapture();
-    }
-  }, [workflowCurrentStep, stopCapture, startCapture]);
+  const isInactive = MIC_INACTIVE_STEPS.includes(workflowCurrentStep ?? '');
+  if (isInactive && !micMutedForInactiveRef.current) {
+    micMutedForInactiveRef.current = true;
+    stopCapture();
+    stopStreaming();          // ← 추가: streaming도 함께 중단
+    useStore.getState().setMuted(true);
+  } else if (!isInactive && micMutedForInactiveRef.current) {
+    // ★ 버그 수정: ref를 false로 먼저 바꾸면 isMuted 이펙트의 guard가
+    //   통과되지 않아 startStreaming()이 호출되지 않는 문제.
+    //   이 이펙트에서 직접 sendMicUnblock + startStreaming + startCapture 모두 호출.
+    micMutedForInactiveRef.current = false;
+    useStore.getState().setMuted(false);
+    sendMicUnblock();         // ← 추가
+    startStreaming();          // ← 추가 (핵심 수정)
+    startCapture();
+  }
+}, [workflowCurrentStep, stopCapture, stopStreaming, startCapture, startStreaming, sendMicUnblock]);
 
   // 도움 버튼 등 외부에서 isMuted 변경 시 캡처 + 스트리밍 제어
   useEffect(() => {

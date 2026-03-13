@@ -3,6 +3,7 @@
  */
 import type { ClientWSEvent, ServerWSEvent, WSSessionConfig } from '@shared/types/websocket';
 import { AudioEngine } from './audioEngine';
+import { useStore } from '@/store';
 
 export interface RealtimePipelineCallbacks {
   onStateChange: (state: 'connecting' | 'connected' | 'disconnected') => void;
@@ -188,15 +189,13 @@ export class RealtimeVoicePipeline {
 
       case 'pino.apply_check_result': {
         const pinoMsg = msg as Extract<typeof msg, { type: 'pino.apply_check_result' }>;
-        import('@/store').then(({ useStore }) => {
-          useStore.getState().patchServiceData({
-            pinoAccessToken: pinoMsg.accessToken,
-            pinoCarrier: pinoMsg.carrier,
-            pinoPhone: pinoMsg.phone,
-            pinoGovDocId: pinoMsg.govDocId,
-            pinoApplyOptionList: pinoMsg.applyOptionList ?? [],
-            customOptionSelections: {},
-          });
+        useStore.getState().patchServiceData({
+          pinoAccessToken: pinoMsg.accessToken,
+          pinoCarrier: pinoMsg.carrier,
+          pinoPhone: pinoMsg.phone,
+          pinoGovDocId: pinoMsg.govDocId,
+          pinoApplyOptionList: pinoMsg.applyOptionList ?? [],
+          customOptionSelections: {},
         });
         break;
       }
