@@ -174,12 +174,18 @@ async def _connect_to_openai(session: ProxySession, config: dict):
     system_prompt = config.get("systemPrompt") or get_system_prompt(language)
 
     try:
+        import ssl
+        import certifi
+
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+
         openai_ws = await websockets.connect(
             OPENAI_REALTIME_URL,
             extra_headers={
                 "Authorization": f"Bearer {api_key}",
                 "OpenAI-Beta": "realtime=v1",
             },
+            ssl=ssl_context
         )
         session.openai_ws = openai_ws
         print(f"[RealtimeProxy] Connected to OpenAI ({session.session_id})")
