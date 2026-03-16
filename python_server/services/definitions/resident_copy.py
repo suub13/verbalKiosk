@@ -90,7 +90,7 @@ resident_copy_server_definition = ServerServiceDefinition(
   - 전자서명 완료 시스템 메시지가 올 때까지 기다리세요. 
   - 대기 중에는 "도움이 필요하시면 아래 마이크버튼을 눌러 말씀해 주세요."라고 1회만 안내하세요.
   - 완료 전까지 어떤 function call도 호출하지 마세요.
-  - 전자서명 완료후 "출력을 시작합니다."라고 안내하세요.
+  - 전자서명완료 후 "출력을 시작합니다."라고 안내하세요.
 
 Step 0: Call get_service_details(serviceId: 'resident-copy') first.
 Step 1: Identity verification FIRST — navigate_step('verify'), instruct user to fill form on screen. Wait for identity_verified signal.
