@@ -27,9 +27,9 @@ const RIPPLE_COUNT = 3;
 const STATE_META: Record<VoiceState, { label: string; color: string }> = {
   idle:       { label: '대기 중',       color: '#94a3b8' },
   listening:  { label: '듣고 있어요',   color: '#3b82f6' },
-  processing: { label: '처리 중...',    color: '#a855f7' },
+  processing: { label: '처리 중...',    color: '#010102' },
   speaking:   { label: 'AI가 응답중입니다. 잠시만 기다려주세요.', color: '#3b82f6' },
-  error:      { label: '오류',          color: '#ef4444' },
+  error:      { label: '오류',          color: '#010102' },
 };
 
 /* ---------- component ---------- */
@@ -258,7 +258,7 @@ export const VoiceStateIndicator: React.FC = () => {
               fontWeight="bold"
               aria-hidden="true"
             >
-              !
+              {/* ! */}
             </text>
           </>
         )}
@@ -279,7 +279,7 @@ export const VoiceStateIndicator: React.FC = () => {
           userSelect: 'none',
         }}
       >
-        {voiceState === 'error' && errorMessage ? errorMessage : label}
+        {voiceState === 'error' && errorMessage ? "연결중입니다" : label}
       </span>
     </div>
   );
