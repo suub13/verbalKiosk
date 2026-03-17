@@ -70,7 +70,7 @@ export const WorkflowPanel: React.FC = () => {
         {/* Steps sidebar */}
         <div
           style={{
-            width: 240,
+            width: 260,
             flexShrink: 0,
             padding: '32px 0',
             borderRight: '1px solid rgba(0,0,0,0.06)',
