@@ -166,6 +166,7 @@ def apply_sign(
         "userPhone": userPhone,
         "applyOptionList": applyOptionList,
     }
+    print(f"[Pino API] 전자 서명 요청 → applyOptionList: {applyOptionList}")
     resp = requests.post(
         url,
         headers={"Content-Type": "application/json", "accessToken": access_token},

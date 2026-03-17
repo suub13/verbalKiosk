@@ -364,7 +364,6 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
       const sel: string[] = (data.customOptionSelections as Record<string, string[]>)?.[group.groupCode] ?? [];
       if (group.requiredAt === 'Y') {
         if (group.groupCode === '30000100001') {
-          // sigunguCode 우선, 없으면 childList에서 sido+sigungu로 매칭
           const code = data.sigunguCode as string | null
             ?? group.childList?.find((c: ApplyOptionItem) =>
                 data.sido && data.sigungu &&
@@ -373,20 +372,12 @@ export function SignDetail({ data }: { data: ResidentCopyData }) {
             ?? null;
           if (code) result.push({ groupCode: group.groupCode, groupCodeValue: code });
           else if (data.sigungu) result.push({ groupCode: group.groupCode, groupCodeValue: data.sigungu as string });
-            } else if (sel.length > 0) {
-        for (const code of sel) {
-          result.push({ groupCode: group.groupCode, groupCodeValue: code });
+        } else if (sel.length > 0) {
+          result.push({ groupCode: group.groupCode, groupCodeValue: sel.join(', ') });
         }
-      }
       } else if (sel.length > 0) {
-      if (group.multiAbleAt === 'Y') {
-        for (const code of sel) {
-          result.push({ groupCode: group.groupCode, groupCodeValue: code });
-        }
-      } else {
-        result.push({ groupCode: group.groupCode, groupCodeValue: sel[0] });
+        result.push({ groupCode: group.groupCode, groupCodeValue: group.multiAbleAt === 'Y' ? sel.join(', ') : sel[0] });
       }
-    } 
     }
     return result;
   };
