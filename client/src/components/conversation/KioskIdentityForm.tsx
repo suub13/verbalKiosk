@@ -35,9 +35,9 @@ const CARRIERS = [
   { id: 'SKT',       label: 'SKT',        color: '#E8102A' },
   { id: 'KT',        label: 'KT',         color: '#E94E1B' },
   { id: 'LGU+',      label: 'LG U+',      color: '#A50034' },
-  { id: 'SKTMVNO',  label: '알뜰(SKT)',  color: '#6B7280' },
-  { id: 'KTMVNO',   label: '알뜰(KT)',   color: '#6B7280' },
-  { id: 'LGUMVNO', label: '알뜰(LGU+)', color: '#6B7280' },
+  { id: 'SKTMVNO',  label: '알뜰(SKT)',  color: '#E8102A' },
+  { id: 'KTMVNO',   label: '알뜰(KT)',   color: '#E94E1B' },
+  { id: 'LGUMVNO', label: '알뜰(LGU+)', color: '#A50034' },
 ];
 
 const SHIFT_MAP: Record<string, string> = {
@@ -480,6 +480,14 @@ export const KioskIdentityForm: React.FC = () => {
     }
   }, [form, closeKeyboard]);
 
+  const isFormComplete = (
+    !validateName(form.name) &&
+    !validateBirthday(form.birthday) &&
+    !validateRrnBack(form.rrnBack) &&
+    !!form.carrier &&
+    !validatePhone(form.phone)
+  );
+
   const disp = (f: FieldId) => displayVal(form, f, cs, currentField, kbMode);
   const isFocused = (f: FieldId) => currentField === f;
   const inputStyle = (f: FieldId, extra?: React.CSSProperties): React.CSSProperties => ({
@@ -664,7 +672,7 @@ export const KioskIdentityForm: React.FC = () => {
         <button style={{ ...S.btnSubmit, opacity: phase === 'sending' ? 0.7 : 1 }}
           onMouseDown={e => { e.preventDefault(); if (phase !== 'sending') handleSendSms(); }}
           disabled={phase === 'sending'}>
-          인증번호 받기
+          {phase === 'sending' ? '전송 중...' : isFormComplete ? '인증번호 받기' : '확인'}
         </button>
       </div>
       <div ref={sliderRef} style={{ ...S.kbSlider, transform: kbVisible ? 'translateY(0)' : 'translateY(100%)' }}
@@ -910,7 +918,7 @@ const S: Record<string, React.CSSProperties> = {
   /* 한글 키보드 */
   kbKoWrap: {
     width: '100%', background: '#e8e9ed',
-    borderRadius: '14px 14px 0 0', padding: '10px 14px 14px',
+    borderRadius: '14px 14px 0 0', padding: '10px 8px 14px',
     display: 'flex', flexDirection: 'column', gap: 7,
     boxShadow: '0 -4px 16px rgba(0,0,0,0.10)', borderTop: '1px solid rgba(0,0,0,0.08)',
   },
