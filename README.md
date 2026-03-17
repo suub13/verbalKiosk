@@ -2,6 +2,9 @@
 
 TypeScript Express 서버를 **완전히 동일한 기능**으로 Python/FastAPI로 재작성한 버전입니다.
 
+## 버전 변경
+03_17_2시_1차시연용 + 실행파일변경
+
 ## 아키텍처 대응표
 
 | TypeScript | Python |

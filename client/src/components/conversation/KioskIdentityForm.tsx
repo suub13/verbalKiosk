@@ -343,6 +343,14 @@ export const KioskIdentityForm: React.FC = () => {
     setForm(prev => setFieldVal(prev, currentField, '')); setCs(csReset(''));
   }, [currentField]);
 
+  const handleSpace = useCallback(() => {
+    if (!currentField || kbMode !== 'korean') return;
+    const v = csVal(cs);
+    const ncs: CSState = { done: v + ' ', cho: -1, jung: -1, jong: 0 };
+    setCs(ncs);
+    setForm(prev => setFieldVal(prev, currentField!, csVal(ncs)));
+  }, [currentField, kbMode, cs]);
+
   const handleConfirm = useCallback(() => {
     if (!currentField) return;
     if (kbMode === 'korean') { const v = csVal(cs); setForm(prev => setFieldVal(prev, currentField, v)); setCs(csReset(v)); }
@@ -662,7 +670,7 @@ export const KioskIdentityForm: React.FC = () => {
       <div ref={sliderRef} style={{ ...S.kbSlider, transform: kbVisible ? 'translateY(0)' : 'translateY(100%)' }}
         onMouseDown={e => { e.preventDefault(); e.stopPropagation(); }}>
         {kbMode === 'korean'
-          ? <KoreanKB isShifted={isShifted} onChar={handleCharKey} onBackspace={handleBackspace} onClear={handleClear} onConfirm={handleConfirm} onShift={() => setIsShifted(p => !p)} />
+          ? <KoreanKB isShifted={isShifted} onChar={handleCharKey} onNum={handleNumKey} onBackspace={handleBackspace} onClear={handleClear} onConfirm={handleConfirm} onShift={() => setIsShifted(p => !p)} onSpace={handleSpace} onClose={closeKeyboard} />
           : <NumericKB onNum={handleNumKey} onBackspace={handleBackspace} onConfirm={handleConfirm} />
         }
       </div>
@@ -673,49 +681,68 @@ export const KioskIdentityForm: React.FC = () => {
 /* ════════════════════════════════════════════════════════════
    한글 키보드
 ════════════════════════════════════════════════════════════ */
-const KR_ROW1 = ['ㄱ','ㄴ','ㄷ','ㄹ','ㅁ','ㅏ','ㅑ','ㅓ','ㅕ'];
-const KR_ROW2 = ['ㅂ','ㅅ','ㅇ','ㅈ','ㅊ','ㅗ','ㅛ','ㅣ','ㅐ'];
-const KR_ROW3 = ['ㅋ','ㅌ','ㅍ','ㅎ','ㅜ','ㅠ','ㅡ','ㅔ'];
+const KR_NUMS = ['1','2','3','4','5','6','7','8','9','0'];
+const KR_ROW1 = ['ㅂ','ㅈ','ㄷ','ㄱ','ㅅ','ㅛ','ㅕ','ㅑ','ㅐ','ㅔ'];
+const KR_ROW2 = ['ㅁ','ㄴ','ㅇ','ㄹ','ㅎ','ㅗ','ㅓ','ㅏ','ㅣ'];
+const KR_ROW3 = ['ㅋ','ㅌ','ㅊ','ㅍ','ㅠ','ㅜ','ㅡ'];
 
 interface KoreanKBProps {
   isShifted: boolean;
   onChar: (k: string) => void;
+  onNum: (k: string) => void;
   onBackspace: () => void;
   onClear: () => void;
   onConfirm: () => void;
   onShift: () => void;
+  onSpace: () => void;
+  onClose: () => void;
 }
 
-const KoreanKB: React.FC<KoreanKBProps> = React.memo(({ isShifted, onChar, onBackspace, onClear, onConfirm, onShift }) => {
+const KoreanKB: React.FC<KoreanKBProps> = React.memo(({ isShifted, onChar, onNum, onBackspace, onClear, onConfirm, onShift, onSpace, onClose }) => {
   const kl = (ch: string) => (isShifted && SHIFT_MAP[ch]) ? SHIFT_MAP[ch] : ch;
   return (
     <div style={S.kbKoWrap}>
-      <div style={S.kbRow}>
-        {KR_ROW1.map(k => (
-          <button key={k} style={S.kbKey} onMouseDown={e => { e.preventDefault(); onChar(k); }}>{kl(k)}</button>
+      {/* 숫자 행: ml 0 / mr 0 */}
+      <div style={{ ...S.kbRow, marginLeft: 0, marginRight: 0 }}>
+        {KR_NUMS.map(k => (
+          <button key={k} style={{ ...S.kbKey, fontSize: 18 }} onMouseDown={e => { e.preventDefault(); onNum(k); }}>{k}</button>
         ))}
         <button style={{ ...S.kbKey, ...S.kbBackspace }} onMouseDown={e => { e.preventDefault(); onBackspace(); }}>
-          <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
         </button>
       </div>
-      <div style={S.kbRow}>
+      {/* 1행: ml 8 / mr 8 */}
+      <div style={{ ...S.kbRow, marginLeft: 8, marginRight: 8 }}>
+        {KR_ROW1.map(k => (
+          <button key={k} style={S.kbKey} onMouseDown={e => { e.preventDefault(); onChar(k); }}>{kl(k)}</button>
+        ))}
+      </div>
+      {/* 2행: ml 20 / mr 20 */}
+      <div style={{ ...S.kbRow, marginLeft: 20, marginRight: 20 }}>
         {KR_ROW2.map(k => (
           <button key={k} style={S.kbKey} onMouseDown={e => { e.preventDefault(); onChar(k); }}>{kl(k)}</button>
         ))}
-        <button style={{ ...S.kbKey, ...S.kbBlue }} onMouseDown={e => { e.preventDefault(); onClear(); }}>정정</button>
       </div>
-      <div style={S.kbRow}>
-        <button style={{ ...S.kbKey, ...S.kbShift, ...(isShifted ? S.kbShiftActive : {}) }} onMouseDown={e => { e.preventDefault(); onShift(); }}>
-          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      {/* 3행: ml 32 / mr 32 */}
+      <div style={{ ...S.kbRow, marginLeft: 32, marginRight: 32 }}>
+        <button style={{ ...S.kbKey, ...S.kbShift, flex: 1.5, ...(isShifted ? S.kbShiftActive : {}) }} onMouseDown={e => { e.preventDefault(); onShift(); }}>
+          <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 19V5M5 12l7-7 7 7"/>
           </svg>
         </button>
         {KR_ROW3.map(k => (
           <button key={k} style={S.kbKey} onMouseDown={e => { e.preventDefault(); onChar(k); }}>{kl(k)}</button>
         ))}
-        <button style={{ ...S.kbKey, ...S.kbBlue }} onMouseDown={e => { e.preventDefault(); onConfirm(); }}>완료</button>
+        <button style={{ ...S.kbKey, ...S.kbBackspace, flex: 1.5, fontSize: 15, whiteSpace: 'nowrap' as const }} onMouseDown={e => { e.preventDefault(); onClear(); }}>정정</button>
+      </div>
+      {/* 하단 행: ml 46 / mr 46 */}
+      <div style={{ ...S.kbRow, marginLeft: 46, marginRight: 46 }}>
+        <button style={{ ...S.kbKey, flex: 0.8, fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' as const }} onMouseDown={e => { e.preventDefault(); onClose(); }}>닫기</button>
+        <button style={{ ...S.kbKey, flex: 3, fontSize: 15 }} onMouseDown={e => { e.preventDefault(); onSpace(); }}>스페이스</button>
+        <button style={{ ...S.kbKey, flex: 1.2, fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' as const }} onMouseDown={e => { e.preventDefault(); }}>#+－</button>
+        <button style={{ ...S.kbKey, ...S.kbBlue, flex: 1.6, fontSize: 15, whiteSpace: 'nowrap' as const }} onMouseDown={e => { e.preventDefault(); onConfirm(); }}>완료</button>
       </div>
     </div>
   );
