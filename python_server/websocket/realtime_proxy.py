@@ -38,6 +38,7 @@ class ActiveBlockingCondition:
     condition_id: str
     blocks: Any  # list[str] | callable
     waiting_message: str
+    block_audio: bool = True  # False면 오디오는 OpenAI로 통과시킴
 
 
 @dataclass
@@ -57,6 +58,7 @@ class ProxySession:
     last_correction_rejected_at: float = 0
     activity_task: Optional[asyncio.Task] = None
     mic_blocked: bool = False   # True during verify step — drop incoming audio
+    current_vad_step: str = ""  # 현재 navigate_step 단계 추적 (VAD 감도 조정용)
     # Pino 세션 데이터 — set_address 매핑 및 issue_document에 사용
     pino_access_token: str = ""
     pino_carrier: str = ""
@@ -340,6 +342,13 @@ async def _handle_openai_message(session: ProxySession, raw: str):
                 kind = "pattern" if is_hallucination else ("echo" if is_prompt_echo else "system")
                 print(f'[RealtimeProxy] Filtered hallucination ({kind}): "{transcript}" ({session.session_id})')
                 await _send_to_client(session.client_ws, {"type": "transcription.filtered"})
+                # 진행 중인 AI response도 함께 취소 — 취소하지 않으면 AI가 계속 함수 호출까지 진행함
+                if session.openai_ws:
+                    try:
+                        await session.openai_ws.send(json.dumps({"type": "response.cancel"}))
+                        print(f'[RealtimeProxy] response.cancel sent (hallucination) ({session.session_id})')
+                    except Exception:
+                        pass
                 return
 
             await _send_to_client(session.client_ws, {
@@ -391,6 +400,44 @@ async def _update_stt_prompt(session: ProxySession, prompt_key: Optional[str] = 
         },
     }))
     print(f"[RealtimeProxy] STT prompt updated → {prompt_key or '(current)'} ({session.session_id})")
+
+
+# ─── VAD sensitivity update ───────────────────────────────────────────────────
+
+# options 단계에서 사용하는 낮은 예민도 값
+OPTIONS_VAD_THRESHOLD = 0.9
+OPTIONS_VAD_SILENCE_MS = 800
+
+async def _update_vad_sensitivity(
+    session: ProxySession,
+    threshold: Optional[float] = None,
+    silence_duration_ms: Optional[int] = None,
+):
+    """sign 단계 진입/이탈 시 VAD threshold와 silence_duration_ms를 동적으로 변경."""
+    if not session.openai_ws:
+        return
+
+    base = (session.config or {}).get("turnDetection") or {
+        "type": "server_vad",
+        "threshold": 0.5,
+        "prefix_padding_ms": 500,
+        "silence_duration_ms": 500,
+    }
+
+    updated = {
+        "type": base["type"],
+        "threshold": threshold if threshold is not None else base["threshold"],
+        "prefix_padding_ms": base["prefix_padding_ms"],
+        "silence_duration_ms": silence_duration_ms if silence_duration_ms is not None else base["silence_duration_ms"],
+    }
+
+    await session.openai_ws.send(json.dumps({
+        "type": "session.update",
+        "session": {
+            "turn_detection": updated,
+        },
+    }))
+    print(f"[RealtimeProxy] VAD updated → threshold={updated['threshold']} silence_duration_ms={updated['silence_duration_ms']} ({session.session_id})")
 
 
 # ─── STT context after function call ─────────────────────────────────────────
@@ -516,6 +563,7 @@ async def _handle_function_call_from_openai(session: ProxySession, event: dict):
                             condition_id=cond_id,
                             blocks=condition.blocks,
                             waiting_message=condition.waiting_message,
+                            block_audio=condition.block_audio,
                         )
                     elif session.active_blocking_condition and session.active_blocking_condition.condition_id == cond_id:
                         session.active_blocking_condition = None
@@ -554,7 +602,8 @@ async def _handle_function_call_from_openai(session: ProxySession, event: dict):
     # Client-handled functions
     if name not in SERVER_EXECUTED_FUNCTIONS:
         # ── navigate_step('verify') → 마이크 차단 ──────────────────────────────
-        # ── navigate_step(other)   → 마이크 복원 ──────────────────────────────
+        # ── navigate_step('options')  → VAD 예민도 낮춤 (threshold 높임) ──────────
+        # ── navigate_step(other)   → 마이크 복원 / VAD 복원 ─────────────────────
         if name == "navigate_step":
             try:
                 step = json.loads(args).get("step", "")
@@ -564,6 +613,17 @@ async def _handle_function_call_from_openai(session: ProxySession, event: dict):
                 elif session.mic_blocked:
                     session.mic_blocked = False
                     print(f"[RealtimeProxy] Mic UNBLOCKED (step={step}) ({session.session_id})")
+
+                # ── options 단계 진입 → VAD threshold 높여서 예민도 낮춤 ────────
+                if step == "options":
+                    asyncio.create_task(_update_vad_sensitivity(session, threshold=OPTIONS_VAD_THRESHOLD, silence_duration_ms=OPTIONS_VAD_SILENCE_MS))
+                    print(f"[RealtimeProxy] VAD sensitivity LOWERED (options step) ({session.session_id})")
+                # ── options 단계 이탈 → VAD threshold 원래 값으로 복원 ───────────
+                elif session.current_vad_step == "options":
+                    asyncio.create_task(_update_vad_sensitivity(session))
+                    print(f"[RealtimeProxy] VAD sensitivity RESTORED (step={step}) ({session.session_id})")
+
+                session.current_vad_step = step
             except Exception:
                 pass
 
@@ -873,13 +933,17 @@ async def _forward_to_openai(session: ProxySession, event: dict):
         return
 
     t = event.get("type")
+    # block_audio=False인 blocking condition은 오디오를 통과시킴 (e.g. options 단계)
+    audio_blocked = (
+        session.active_blocking_condition is not None
+        and session.active_blocking_condition.block_audio
+    )
     if t == "audio.append":
-        # Block audio input while a blocking condition is active (e.g. options screen)
-        if session.active_blocking_condition:
+        if audio_blocked:
             return
         msg = {"type": "input_audio_buffer.append", "audio": event.get("audio", "")}
     elif t == "audio.commit":
-        if session.active_blocking_condition:
+        if audio_blocked:
             return
         msg = {"type": "input_audio_buffer.commit"}
     elif t == "conversation.clear":

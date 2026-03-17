@@ -42,6 +42,7 @@ resident_copy_server_definition = ServerServiceDefinition(
             set_on_function="set_issuance_type",
             set_condition=lambda args: args.get("type") == "custom",
             blocks=lambda name, args: not (name == "navigate_step" and args.get("step") == "options"),
+            block_audio=False,  # options 단계에서는 음성 입력 허용
             waiting_message=(
                 "선택발급 옵션은 화면 터치로만 선택합니다. "
                 "사용자가 화면에서 항목을 선택하고 선택완료 버튼을 누를 때까지 기다리세요. "

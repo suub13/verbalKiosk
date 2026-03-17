@@ -131,11 +131,11 @@ export function useVoicePipeline() {
   }, [workflowCurrentStep, voiceState, endSession]);
 
   /**
-   * 마이크 비활성 단계(verify/options/sign/issue) 진입 시 마이크 자동 OFF.
+   * 마이크 비활성 단계(verify/sign/issue) 진입 시 마이크 자동 OFF.
    * 해당 단계에서 벗어나면 자동 ON.
    * 도움 버튼으로 isMuted가 외부에서 바뀌면 startCapture/stopCapture 반영.
    */
-  const MIC_INACTIVE_STEPS = ['verify', 'options', 'sign', 'issue'];
+  const MIC_INACTIVE_STEPS = ['verify', 'sign', 'issue'];
 
   const isMuted = useStore(s => s.isMuted);
   const micMutedForInactiveRef = useRef(false);

@@ -12,11 +12,13 @@ class BlockingCondition:
         set_condition: Callable[[dict], bool],
         blocks: list[str] | Callable[[str, dict], bool],
         waiting_message: str,
+        block_audio: bool = True,  # False면 오디오는 OpenAI로 통과시킴
     ):
         self.set_on_function = set_on_function
         self.set_condition = set_condition
         self.blocks = blocks
         self.waiting_message = waiting_message
+        self.block_audio = block_audio
 
 
 class ServerServiceDefinition:

@@ -3,6 +3,7 @@ import type { Message } from '@/store/slices/conversationSlice';
 import { getServiceDefinition } from '@/services/definitions/registry';
 import type { DispatchContext } from '@/services/definitions/types';
 import { issueBridge } from '@/services/issueBridge';
+import { MIC_INACTIVE_STEPS } from '@/constants/voice';
 
 // Re-export DispatchContext for callers that import it from here
 export type { DispatchContext };
@@ -76,7 +77,6 @@ export function dispatchFunctionCall(
       }
 
       // 마이크 비활성 단계 진입 시 voiceState를 idle로 전환
-      const MIC_INACTIVE_STEPS = ['verify', 'options', 'sign', 'issue'];
       if (MIC_INACTIVE_STEPS.includes(parsed.step)) {
         const vs = store.voiceState;
         if (vs !== 'idle' && vs !== 'speaking' && vs !== 'error') {
