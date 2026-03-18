@@ -271,6 +271,8 @@ export const KioskIdentityForm: React.FC = () => {
   const fieldRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const sliderRef = useRef<HTMLDivElement>(null);
   const authCodeRef = useRef<HTMLInputElement>(null);
+  // stable ref: 매 렌더마다 최신 handler를 갱신하여 listener 재등록 없이 항상 최신 state 접근
+  const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
 
   const scrollToField = useCallback((fieldId: string, extraMargin = 0) => {
     setTimeout(() => {
@@ -317,6 +319,7 @@ export const KioskIdentityForm: React.FC = () => {
 
   const handleNumKey = useCallback((k: string) => {
     if (!currentField) return;
+    if (currentField === 'name') return; // 이름 필드는 숫자 입력 불가
     const ml = MAX_LEN[currentField];
     const cur = getFieldVal(form, currentField);
     if (ml && cur.length >= ml) return;
@@ -410,40 +413,44 @@ export const KioskIdentityForm: React.FC = () => {
     }
   }, [authCode, userToken, form]);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      /* ── 인증번호 입력 단계: 키보드 입력 지원 ── */
-      if (phase === 'code') {
-        if (e.key === 'Backspace') {
-          e.preventDefault();
-          setAuthCode(prev => prev.slice(0, -1));
-          setAuthCodeError(null);
-          return;
-        }
-        if (e.key === 'Enter') { e.preventDefault(); handleVerifyCode(); return; }
-        if (/^[0-9]$/.test(e.key) && authCode.length < 6) {
-          e.preventDefault();
-          setAuthCode(prev => prev + e.key);
-          setAuthCodeError(null);
-          return;
-        }
+  // 매 렌더마다 최신 클로저를 ref에 갱신 (deps 없이 항상 최신값 유지)
+  keyHandlerRef.current = (e: KeyboardEvent) => {
+    /* ── 인증번호 입력 단계: 키보드 입력 지원 ── */
+    if (phase === 'code') {
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        setAuthCode(prev => prev.slice(0, -1));
+        setAuthCodeError(null);
         return;
       }
-
-      if (phase !== 'form' || waitingCarrier || !currentField) return;
-      if (e.key === 'Backspace') { e.preventDefault(); handleBackspace(); return; }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); handleConfirm(); return; }
-      if (e.key === 'Escape') { e.preventDefault(); closeKeyboard(); return; }
-      if (kbMode === 'number') { if (/^[0-9]$/.test(e.key)) { e.preventDefault(); handleNumKey(e.key); } return; }
-      if (kbMode === 'korean') {
-        const mapped = KO_MAP[e.key];
-        if (mapped) { e.preventDefault(); handleCharKey(mapped); return; }
-        if (e.key === ' ') { e.preventDefault(); const v = csVal(cs); const ncs: CSState = { done: v + ' ', cho: -1, jung: -1, jong: 0 }; setCs(ncs); setForm(prev => setFieldVal(prev, currentField!, csVal(ncs))); }
+      if (e.key === 'Enter') { e.preventDefault(); handleVerifyCode(); return; }
+      if (/^[0-9]$/.test(e.key) && authCode.length < 6) {
+        e.preventDefault();
+        setAuthCode(prev => prev + e.key);
+        setAuthCodeError(null);
+        return;
       }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [phase, authCode, currentField, kbMode, waitingCarrier, cs, handleBackspace, handleConfirm, handleNumKey, handleCharKey, handleVerifyCode, closeKeyboard]);
+      return;
+    }
+
+    if (phase !== 'form' || waitingCarrier || !currentField) return;
+    if (e.key === 'Backspace') { e.preventDefault(); handleBackspace(); return; }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); handleConfirm(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); closeKeyboard(); return; }
+    if (kbMode === 'number') { if (/^[0-9]$/.test(e.key)) { e.preventDefault(); handleNumKey(e.key); } return; }
+    if (kbMode === 'korean') {
+      const mapped = KO_MAP[e.key];
+      if (mapped) { e.preventDefault(); handleCharKey(mapped); return; }
+      if (e.key === ' ') { e.preventDefault(); const v = csVal(cs); const ncs: CSState = { done: v + ' ', cho: -1, jung: -1, jong: 0 }; setCs(ncs); setForm(prev => setFieldVal(prev, currentField!, csVal(ncs))); }
+    }
+  };
+
+  // listener는 마운트 시 한 번만 등록 — ref를 통해 항상 최신 handler 호출
+  useEffect(() => {
+    const stable = (e: KeyboardEvent) => keyHandlerRef.current(e);
+    document.addEventListener('keydown', stable);
+    return () => document.removeEventListener('keydown', stable);
+  }, []);
 
   const handleScrollAreaClick = useCallback((e: React.MouseEvent) => {
     const t = e.target as HTMLElement;
