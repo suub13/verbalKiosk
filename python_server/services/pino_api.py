@@ -4,8 +4,23 @@ All functions mirror pinoAPI.txt provided by the user.
 """
 import os
 import json
+import time
 import requests
 from typing import Optional
+
+
+def _with_retry(fn, max_retries: int = 3, delay: float = 1.0):
+    """모든 예외에 대해 최대 max_retries회 재시도. 마지막 시도에서도 실패하면 예외를 올림."""
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as e:
+            last_exc = e
+            if attempt < max_retries - 1:
+                print(f"[Pino API] 재시도 {attempt + 1}/{max_retries - 1}: {e}")
+                time.sleep(delay)
+    raise last_exc
 
 BASE_URL = os.environ.get("PINO_BASE_URL", os.environ.get("BASE_URL", "")).rstrip("/")
 
@@ -23,19 +38,17 @@ def get_doc_list() -> list[dict]:
     전자증명서 전체 목록을 조회한 뒤 useAt == 'Y' 항목만 반환합니다.
     Returns list of dicts: {govDocId, govDocNm}
     """
-    url = f"{BASE_URL}/api/voice/v1/gov/doc/list"
-    resp = requests.get(url, headers={"Content-Type": "application/json"}, timeout=5)
-    resp.raise_for_status()
+    def _call():
+        url = f"{BASE_URL}/api/voice/v1/gov/doc/list"
+        resp = requests.get(url, headers={"Content-Type": "application/json"}, timeout=5)
+        resp.raise_for_status()
+        body = resp.json()
+        if body.get("code") != "100":
+            raise Exception(f"전자증명서 목록 조회 실패: {body.get('message')}")
+        all_docs: list[dict] = body.get("govDocList", [])
+        return [d for d in all_docs if d.get("useAt") == "Y"]
 
-    body = resp.json()
-    if body.get("code") != "100":
-        raise Exception(f"전자증명서 목록 조회 실패: {body.get('message')}")
-
-    all_docs: list[dict] = body.get("govDocList", [])
-    # useAt == 'Y' 만 필터링
-    available = [d for d in all_docs if d.get("useAt") == "Y"]
-
-    return available
+    return _with_retry(_call)
 
 
 # ── 본인확인 요청 ─────────────────────────────────────────────────────────────
@@ -129,22 +142,22 @@ def apply_check(access_token: str, gov_doc_id: str) -> list[dict]:
     """
     신청 가능 여부 확인 + applyOptionList 반환.
     """
-    url = f"{BASE_URL}/api/voice/v1/gov/doc/apply/check"
-    resp = requests.post(
-        url,
-        headers={"Content-Type": "application/json", "accessToken": access_token},
-        data=json.dumps({"govDocId": gov_doc_id}),
-        timeout=5,
-    )
-    resp.raise_for_status()
-
-    body = resp.json()
-    if body.get("code") != "100":
-        raise Exception(f"신청 가능여부 조회 실패: {body.get('message')}")
-    else:
+    def _call():
+        url = f"{BASE_URL}/api/voice/v1/gov/doc/apply/check"
+        resp = requests.post(
+            url,
+            headers={"Content-Type": "application/json", "accessToken": access_token},
+            data=json.dumps({"govDocId": gov_doc_id}),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if body.get("code") != "100":
+            raise Exception(f"신청 가능여부 조회 실패: {body.get('message')}")
         print(f"[Pino API] 신청 가능여부 조회 성공")
+        return body.get("applyOptionList", [])
 
-    return body.get("applyOptionList", [])
+    return _with_retry(_call)
 
 
 # ── 전자 서명 요청 ────────────────────────────────────────────────────────────
@@ -159,28 +172,30 @@ def apply_sign(
     """
     전자 서명 요청 → signToken 반환.
     """
-    url = f"{BASE_URL}/api/voice/v1/gov/doc/apply/sign"
-    data = {
-        "govDocId": gov_doc_id,
-        "providerId": providerId,
-        "userPhone": userPhone,
-        "applyOptionList": applyOptionList,
-    }
     print(f"[Pino API] 전자 서명 요청 → applyOptionList: {applyOptionList}")
-    resp = requests.post(
-        url,
-        headers={"Content-Type": "application/json", "accessToken": access_token},
-        data=json.dumps(data),
-        timeout=5,
-    )
-    resp.raise_for_status()
 
-    body = resp.json()
-    if body.get("code") != "100":
-        raise Exception(f"전자증명서 서명 요청 실패: {body.get('message')}")
-    else:
+    def _call():
+        url = f"{BASE_URL}/api/voice/v1/gov/doc/apply/sign"
+        data = {
+            "govDocId": gov_doc_id,
+            "providerId": providerId,
+            "userPhone": userPhone,
+            "applyOptionList": applyOptionList,
+        }
+        resp = requests.post(
+            url,
+            headers={"Content-Type": "application/json", "accessToken": access_token},
+            data=json.dumps(data),
+            timeout=5,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if body.get("code") != "100":
+            raise Exception(f"전자증명서 서명 요청 실패: {body.get('message')}")
         print(f"[Pino API] 전자증명서 서명 요청 성공 → signToken")
-    return body.get("signToken")
+        return body.get("signToken")
+
+    return _with_retry(_call)
 
 
 # ── 전자증명서 최종 신청 ──────────────────────────────────────────────────────

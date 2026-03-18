@@ -18,7 +18,7 @@ from services.civil_service_registry import CivilServiceRegistry
 from services.session_store import session_store
 from services.definitions.registry import get_all_server_service_definitions
 from config.prompts import STT_STEP_PROMPTS, get_system_prompt
-from constants.timings import SESSION_TIMINGS, VAD_DEFAULTS, OPTIONS_VAD_THRESHOLD, OPTIONS_VAD_SILENCE_MS
+from constants.timings import SESSION_TIMINGS
 from shared import CIVIL_SERVICE_TOOLS
 
 OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview"
@@ -79,7 +79,9 @@ class ProxySession:
 
 def handle_options_confirmed_rest(result: str) -> bool:
     for session in list(_sessions.values()):
-        if session.active_blocking_condition:
+        # active_blocking_condition 여부와 무관하게 열린 세션이 있으면 전달
+        # (WebSocket 경로가 먼저 처리되어 condition이 이미 해제된 경우도 처리)
+        if session.openai_ws is not None:
             asyncio.create_task(_handle_options_confirmed(session, result))
             return True
     return False
@@ -198,7 +200,12 @@ async def _connect_to_openai(session: ProxySession, config: dict):
         for extra in config.get("tools", []):
             tools.append(extra)
 
-        turn_detection = config.get("turnDetection") or VAD_DEFAULTS
+        turn_detection = config.get("turnDetection") or {
+            "type": "server_vad",
+            "threshold": 0.7,
+            "prefix_padding_ms": 500,
+            "silence_duration_ms": 1000,
+        }
 
         session_config = {
             "type": "session.update",
@@ -429,6 +436,10 @@ async def _update_stt_prompt(session: ProxySession, prompt_key: Optional[str] = 
 
 # ─── VAD sensitivity update ───────────────────────────────────────────────────
 
+# options 단계에서 사용하는 낮은 예민도 값
+OPTIONS_VAD_THRESHOLD = 0.9
+OPTIONS_VAD_SILENCE_MS = 800
+
 async def _update_vad_sensitivity(
     session: ProxySession,
     threshold: Optional[float] = None,
@@ -438,7 +449,12 @@ async def _update_vad_sensitivity(
     if not session.openai_ws:
         return
 
-    base = (session.config or {}).get("turnDetection") or VAD_DEFAULTS
+    base = (session.config or {}).get("turnDetection") or {
+        "type": "server_vad",
+        "threshold": 0.7,
+        "prefix_padding_ms": 500,
+        "silence_duration_ms": 1000,
+    }
 
     updated = {
         "type": base["type"],
@@ -866,7 +882,14 @@ async def _handle_options_confirmed(session: ProxySession, result: str):
                 apply_option_list = pino_apply_check(access_token, gov_doc_id)
                 print(f"[RealtimeProxy] apply_check 완료: {len(apply_option_list)}개 옵션그룹 ({session.session_id})")
         except Exception as e:
-            print(f"[RealtimeProxy] apply_check 실패 (무시): {e} ({session.session_id})")
+            print(f"[RealtimeProxy] apply_check 최종 실패 (3회 시도): {e} ({session.session_id})")
+            # 3회 재시도 후에도 실패 → 사용자에게 안내하고 세션 종료
+            await _send_to_client(session.client_ws, {
+                "type": "error",
+                "error": "신청 가능 여부 조회에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+                "code": "APPLY_CHECK_FAILED",
+            })
+            return
 
         # 세션에 Pino 데이터 저장 (set_address 매핑 및 issue_document에 사용)
         session.pino_access_token = access_token

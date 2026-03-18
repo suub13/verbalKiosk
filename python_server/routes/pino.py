@@ -73,9 +73,8 @@ async def pino_identity_verify(body: IdentityVerifyRequest):
             },
         }
     except Exception as e:
-        import traceback, requests as _req
+        import traceback
         err_str = str(e)
-        # requests.HTTPError includes the response - extract body for debugging
         if hasattr(e, "response") and e.response is not None:
             try:
                 err_str = f"Pino API {e.response.status_code}: {e.response.text}"
@@ -83,7 +82,7 @@ async def pino_identity_verify(body: IdentityVerifyRequest):
                 pass
         print(f"[Pino] identity/verify error: {err_str}")
         print(traceback.format_exc())
-        return {"success": False, "error": err_str}
+        return {"success": False, "error": err_str, "userMessage": "입력된 값을 다시 확인해 주세요."}
 
 
 # ── 인증번호 확인 & 토큰 발급 ─────────────────────────────────────────────────
@@ -109,7 +108,7 @@ async def pino_verify_result(body: VerifyResultRequest):
             },
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "userMessage": "인증번호를 확인해 주세요."}
 
 
 # ── 신청 가능 여부 조회 ────────────────────────────────────────────────────────
@@ -192,3 +191,4 @@ async def pino_doc_apply(
         return {"success": True, "data": result}
     except Exception as e:
         return {"success": False, "error": str(e)}
+    
