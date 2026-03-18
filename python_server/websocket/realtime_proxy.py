@@ -18,7 +18,7 @@ from services.civil_service_registry import CivilServiceRegistry
 from services.session_store import session_store
 from services.definitions.registry import get_all_server_service_definitions
 from config.prompts import STT_STEP_PROMPTS, get_system_prompt
-from constants.timings import SESSION_TIMINGS
+from constants.timings import SESSION_TIMINGS, VAD_DEFAULTS, OPTIONS_VAD_THRESHOLD, OPTIONS_VAD_SILENCE_MS
 from shared import CIVIL_SERVICE_TOOLS
 
 OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview"
@@ -198,12 +198,7 @@ async def _connect_to_openai(session: ProxySession, config: dict):
         for extra in config.get("tools", []):
             tools.append(extra)
 
-        turn_detection = config.get("turnDetection") or {
-            "type": "server_vad",
-            "threshold": 0.7,
-            "prefix_padding_ms": 500,
-            "silence_duration_ms": 500,
-        }
+        turn_detection = config.get("turnDetection") or VAD_DEFAULTS
 
         session_config = {
             "type": "session.update",
@@ -434,10 +429,6 @@ async def _update_stt_prompt(session: ProxySession, prompt_key: Optional[str] = 
 
 # ─── VAD sensitivity update ───────────────────────────────────────────────────
 
-# options 단계에서 사용하는 낮은 예민도 값
-OPTIONS_VAD_THRESHOLD = 0.9
-OPTIONS_VAD_SILENCE_MS = 800
-
 async def _update_vad_sensitivity(
     session: ProxySession,
     threshold: Optional[float] = None,
@@ -447,12 +438,7 @@ async def _update_vad_sensitivity(
     if not session.openai_ws:
         return
 
-    base = (session.config or {}).get("turnDetection") or {
-        "type": "server_vad",
-        "threshold": 0.7,
-        "prefix_padding_ms": 500,
-        "silence_duration_ms": 500,
-    }
+    base = (session.config or {}).get("turnDetection") or VAD_DEFAULTS
 
     updated = {
         "type": base["type"],
