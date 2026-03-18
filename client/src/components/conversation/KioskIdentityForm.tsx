@@ -34,7 +34,7 @@ const FIELD_ORDER: FieldId[] = ['name', 'birthday', 'rrn-back', 'phone'];
 const CARRIERS = [
   { id: 'SKT',       label: 'SKT',        color: '#E8102A' },
   { id: 'KT',        label: 'KT',         color: '#E94E1B' },
-  { id: 'LGU+',      label: 'LG U+',      color: '#A50034' },
+  { id: 'LGU',      label: 'LG U+',      color: '#A50034' },
   { id: 'SKTMVNO',  label: '알뜰(SKT)',  color: '#E8102A' },
   { id: 'KTMVNO',   label: '알뜰(KT)',   color: '#E94E1B' },
   { id: 'LGUMVNO', label: '알뜰(LGU+)', color: '#A50034' },

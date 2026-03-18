@@ -54,6 +54,7 @@ class ProxySession:
     current_stt_prompt: str = STT_STEP_PROMPTS["default"]
     speech_start_stt_prompt: str = STT_STEP_PROMPTS["default"]
     last_speech_started_at: float = 0
+    pending_audio_items: list = None  # speech_started 후 생성된 item_id 목록 (환각 삭제용)
     active_blocking_condition: Optional[ActiveBlockingCondition] = None
     last_correction_rejected_at: float = 0
     activity_task: Optional[asyncio.Task] = None
@@ -283,10 +284,18 @@ async def _handle_openai_message(session: ProxySession, raw: str):
             print(f"[RealtimeProxy] Speech started ({session.session_id})")
             session.last_speech_started_at = time.time()
             session.speech_start_stt_prompt = session.current_stt_prompt
+            session.pending_audio_items = []  # 이번 발화로 생성될 item 추적 시작
             await _send_to_client(session.client_ws, {"type": "input_audio_buffer.speech_started"})
 
         case "input_audio_buffer.speech_stopped":
             await _send_to_client(session.client_ws, {"type": "input_audio_buffer.speech_stopped"})
+
+        case "conversation.item.created":
+            # speech_started 이후 생성된 item들을 추적 (환각 감지 시 일괄 삭제용)
+            if session.pending_audio_items is not None:
+                created_item_id = event.get("item", {}).get("id")
+                if created_item_id:
+                    session.pending_audio_items.append(created_item_id)
 
         case "input_audio_buffer.committed":
             await _send_to_client(session.client_ws, {"type": "input_audio_buffer.committed"})
@@ -311,6 +320,7 @@ async def _handle_openai_message(session: ProxySession, raw: str):
 
         case "conversation.item.input_audio_transcription.completed":
             transcript = (event.get("transcript") or "").strip()
+            item_id = event.get("item_id")
             print(f'[RealtimeProxy] STT Completed: "{transcript}" ({session.session_id})')
 
             if not transcript:
@@ -342,11 +352,31 @@ async def _handle_openai_message(session: ProxySession, raw: str):
                 kind = "pattern" if is_hallucination else ("echo" if is_prompt_echo else "system")
                 print(f'[RealtimeProxy] Filtered hallucination ({kind}): "{transcript}" ({session.session_id})')
                 await _send_to_client(session.client_ws, {"type": "transcription.filtered"})
-                # 진행 중인 AI response도 함께 취소 — 취소하지 않으면 AI가 계속 함수 호출까지 진행함
                 if session.openai_ws:
                     try:
+                        # 1. 진행 중인 response 취소 시도 (이미 끝났으면 무시)
                         await session.openai_ws.send(json.dumps({"type": "response.cancel"}))
                         print(f'[RealtimeProxy] response.cancel sent (hallucination) ({session.session_id})')
+                    except Exception:
+                        pass
+                    # 2. 이번 발화로 생성된 모든 item 삭제 (오디오 + FC + FC결과 item 전체)
+                    items_to_delete = list(session.pending_audio_items or [])
+                    if item_id and item_id not in items_to_delete:
+                        items_to_delete.append(item_id)
+                    for del_id in reversed(items_to_delete):
+                        try:
+                            await session.openai_ws.send(json.dumps({
+                                "type": "conversation.item.delete",
+                                "item_id": del_id,
+                            }))
+                            print(f'[RealtimeProxy] conversation.item.delete sent ({del_id}) ({session.session_id})')
+                        except Exception:
+                            pass
+                    session.pending_audio_items = None
+                    # 3. item 삭제 후 AI가 다시 응답하도록 response.create 전송
+                    try:
+                        await session.openai_ws.send(json.dumps({"type": "response.create"}))
+                        print(f'[RealtimeProxy] response.create sent after hallucination cleanup ({session.session_id})')
                     except Exception:
                         pass
                 return
@@ -419,7 +449,7 @@ async def _update_vad_sensitivity(
 
     base = (session.config or {}).get("turnDetection") or {
         "type": "server_vad",
-        "threshold": 0.5,
+        "threshold": 0.7,
         "prefix_padding_ms": 500,
         "silence_duration_ms": 500,
     }

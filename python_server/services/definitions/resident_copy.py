@@ -23,6 +23,7 @@ resident_copy_server_definition = ServerServiceDefinition(
             "verify": "default",   # 본인인증 단계 - 화면 입력이므로 STT 불필요
             "address": "address_sido",
             "type": "type",
+            "options": "default",  # options 단계 - 화면 터치로 선택하므로 STT 불필요
             "sign": "default",    # 전자서명 단계 - 화면 터치 대기
             "issue": "default",
         }.get(args.get("step", ""), None),
